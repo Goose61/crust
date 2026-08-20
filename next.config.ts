@@ -15,8 +15,18 @@ const nextConfig: NextConfig = {
   },
   serverExternalPackages: ["sharp", "@irys/upload", "@irys/upload-solana"],
 
-  // Redirect /api/assets-blob in production since Blob URLs are direct CDN links
-  // (The route still exists as a local-dev fallback)
+  // Serve the static thecrust landing page at the root and legal URLs.
+  // Rewrites run before the App Router so the static HTML is returned directly
+  // without the Next.js layout wrapper (which is intentional — the landing has
+  // its own chrome).
+  async rewrites() {
+    return [
+      { source: "/", destination: "/thecrust/index.html" },
+      { source: "/contact", destination: "/thecrust/contact.html" },
+      { source: "/terms", destination: "/thecrust/terms.html" },
+      { source: "/privacy", destination: "/thecrust/privacy.html" },
+    ];
+  },
 };
 
 export default nextConfig;

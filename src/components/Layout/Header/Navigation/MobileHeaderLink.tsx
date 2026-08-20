@@ -38,8 +38,9 @@ const MobileHeaderLink: React.FC<{
   };
 
   const isActive = (href: string) => {
-    if (href.startsWith("/#")) {
-      return path === "/" && activeHash === href.replace("/", "");
+    if (href.includes("#")) {
+      const [hrefPath, hrefHash] = href.split("#");
+      return path === hrefPath && activeHash === `#${hrefHash}`;
     }
     return path === href;
   };

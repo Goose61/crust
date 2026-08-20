@@ -1,0 +1,14 @@
+{
+  "name": "$PIZZA · Dough Boi · thecrust.io",
+  "short_name": "$PIZZA",
+  "description": "Dough Boi runs the kitchen. $PIZZA on Solana. A Slice of Life.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0908",
+  "theme_color": "#0A0908",
+  "icons": [
+    { "src": "favicon.png", "sizes": "64x64", "type": "image/png" },
+    { "src": "pixel-slice.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "pixel-slice-lg.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

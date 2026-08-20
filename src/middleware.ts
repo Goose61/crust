@@ -35,10 +35,11 @@ export function middleware(req: NextRequest) {
     [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Next.js requires unsafe-eval in dev
-      "style-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: blob: https://gateway.irys.xyz https://arweave.net https://blob.vercel-storage.com",
       "connect-src 'self' https://api.slicechain.io https://pay.slicechain.io https://api.coingecko.com https://blob.vercel-storage.com",
-      "font-src 'self'",
+      "font-src 'self' https://fonts.gstatic.com",
+      "frame-src https://dexscreener.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
     ].join("; "),
