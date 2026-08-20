@@ -1,10 +1,16 @@
 import { getCollectionsCol } from "./db";
 import type { Collection } from "./types";
 
+function asCollection(doc: Collection & { _id?: unknown }): Collection {
+  const { _id, ...rest } = doc;
+  void _id;
+  return rest;
+}
+
 export async function listCollections(): Promise<Collection[]> {
   const col = await getCollectionsCol();
   const docs = await col.find({}, { projection: { _id: 0 } }).toArray();
-  return docs as Collection[];
+  return docs.map(asCollection);
 }
 
 export async function getCollection(id: string): Promise<Collection | null> {
@@ -13,7 +19,7 @@ export async function getCollection(id: string): Promise<Collection | null> {
     { $or: [{ id }, { slug: id }] },
     { projection: { _id: 0 } },
   );
-  return doc ? (doc as Collection) : null;
+  return doc ? asCollection(doc) : null;
 }
 
 export async function saveCollection(collection: Collection): Promise<Collection> {
@@ -33,7 +39,7 @@ export async function updateCollection(
     { projection: { _id: 0 } },
   );
   if (!doc) return null;
-  const current = doc as Collection;
+  const current = asCollection(doc);
   const next = await fn(current);
   next.updatedAt = new Date().toISOString();
   await col.replaceOne({ id: next.id }, next, { upsert: true });

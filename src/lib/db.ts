@@ -1,4 +1,5 @@
-import { MongoClient, type Db } from "mongodb";
+import { MongoClient, type Collection as MongoCollection, type Db } from "mongodb";
+import type { Collection } from "./types";
 
 const uri = process.env.MONGODB_URI;
 
@@ -31,9 +32,9 @@ export async function getDb(): Promise<Db> {
   return client.db("crypgo");
 }
 
-export async function getCollectionsCol() {
+export async function getCollectionsCol(): Promise<MongoCollection<Collection>> {
   const db = await getDb();
-  const col = db.collection("collections");
+  const col = db.collection<Collection>("collections");
   await col.createIndex({ id: 1 }, { unique: true, background: true });
   await col.createIndex({ slug: 1 }, { background: true });
   return col;
