@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import Link from "next/link";
 
 export default function ScrollToTop() {
   const [isVisible, setIsVisible] = useState(false);

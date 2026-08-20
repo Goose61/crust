@@ -18,6 +18,13 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // Unused Crypgo template leftovers (already excluded from tsconfig)
+      "src/components/Auth/**",
+      "src/components/Documentation/**",
+      "src/components/SharedComponent/Blog/**",
+      "src/utils/markdown.ts",
+      "src/utils/markdownToHtml.ts",
+      "src/utils/validateEmail.ts",
     ],
   },
 ];

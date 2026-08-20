@@ -126,7 +126,6 @@ export function LaunchWizard() {
 
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [waitlistWallet, setWaitlistWallet] = useState("");
   const [allowlistText, setAllowlistText] = useState("");
 
   const STEPS = mode === "layers" ? STEPS_LAYERS : STEPS_READY;

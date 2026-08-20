@@ -11,7 +11,7 @@ interface Crypto {
 }
 
 const BuyCrypto = () => {
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [cryptos, setCryptos] = useState<Crypto[]>([]);
   const [formData, setFormData] = useState<{
     name: string;
