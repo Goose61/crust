@@ -16,16 +16,19 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["sharp", "@irys/upload", "@irys/upload-solana"],
 
   // Serve the static thecrust landing page at the root and legal URLs.
-  // Rewrites run before the App Router so the static HTML is returned directly
-  // without the Next.js layout wrapper (which is intentional — the landing has
-  // its own chrome).
+  // beforeFiles rewrites run BEFORE Next.js matches any pages or static files,
+  // so they take priority over src/app/page.tsx at "/".
   async rewrites() {
-    return [
-      { source: "/", destination: "/thecrust/index.html" },
-      { source: "/contact", destination: "/thecrust/contact.html" },
-      { source: "/terms", destination: "/thecrust/terms.html" },
-      { source: "/privacy", destination: "/thecrust/privacy.html" },
-    ];
+    return {
+      beforeFiles: [
+        { source: "/", destination: "/thecrust/index.html" },
+        { source: "/contact", destination: "/thecrust/contact.html" },
+        { source: "/terms", destination: "/thecrust/terms.html" },
+        { source: "/privacy", destination: "/thecrust/privacy.html" },
+      ],
+      afterFiles: [],
+      fallback: [],
+    };
   },
 };
 
