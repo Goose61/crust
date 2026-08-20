@@ -58,7 +58,7 @@ const Portfolio = () => {
                       </div>
                     </td>
                     <td className='py-5'>
-                      <h3 className='text-muted text-xl ml-5'>
+                      <h3 className='text-white text-xl ml-5'>
                         {item.title}
                       </h3>
                     </td>
