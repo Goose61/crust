@@ -5,76 +5,122 @@ import { uploadBlob, uploadBlobText } from "@/lib/blob-storage";
 import { blobImagePath, blobMetadataPath } from "@/lib/paths";
 import { rateLimit } from "@/lib/rate-limit";
 import { defaultPayments, type Collection, type GeneratedToken } from "@/lib/types";
+import { mintGiftNft, isValidSolanaAddress } from "@/lib/mint-nft";
 
 export const runtime = "nodejs";
 
 const MAX_GIFT_BYTES = 50 * 1024 * 1024; // 50 MB
 
-function isAllowedImageMagic(buf: Buffer): boolean {
-  if (buf.length < 4) return false;
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true;
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
-  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return true;
-  return false;
+const MIME_MAP: Record<string, string> = {
+  ".png": "image/png",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".webp": "image/webp",
+};
+
+function imageMagic(buf: Buffer): { ok: boolean; ext: string } {
+  if (buf.length < 12) return { ok: false, ext: "" };
+  // PNG
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+    return { ok: true, ext: ".png" };
+  // JPEG
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)
+    return { ok: true, ext: ".jpeg" };
+  // WebP — RIFF....WEBP
+  if (
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  )
+    return { ok: true, ext: ".webp" };
+  return { ok: false, ext: "" };
 }
 
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0] ?? "unknown";
   const rl = await rateLimit(`gift:${ip}`, 20, 60 * 60 * 1000);
-  if (!rl.allowed) {
+  if (!rl.allowed)
     return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-  }
 
   const form = await req.formData();
   const file = form.get("file");
-  if (!(file instanceof File)) {
+  if (!(file instanceof File))
     return NextResponse.json({ error: "An image is required" }, { status: 400 });
-  }
-  if (file.size > MAX_GIFT_BYTES) {
+  if (file.size > MAX_GIFT_BYTES)
     return NextResponse.json({ error: "Image too large (max 50 MB)" }, { status: 413 });
-  }
 
   const buf = Buffer.from(await file.arrayBuffer());
-  if (!isAllowedImageMagic(buf)) {
-    return NextResponse.json({ error: "Use a PNG, JPG, or WebP image" }, { status: 400 });
-  }
+  const magic = imageMagic(buf);
+  if (!magic.ok)
+    return NextResponse.json({ error: "Use a PNG, JPEG, or WebP image" }, { status: 400 });
 
   const name = String(form.get("name") || "Gift NFT").trim() || "Gift NFT";
+
   const recipient = String(form.get("recipient") || "").trim();
+  if (!recipient)
+    return NextResponse.json({ error: "Recipient wallet is required" }, { status: 400 });
+  if (!isValidSolanaAddress(recipient))
+    return NextResponse.json({ error: "Recipient is not a valid Solana address" }, { status: 400 });
+
   const payer = String(form.get("payer") || "").trim();
   const note = String(form.get("note") || "").trim();
-  if (!recipient) {
-    return NextResponse.json({ error: "Recipient wallet is required" }, { status: 400 });
-  }
 
+  // ── Storage ──────────────────────────────────────────────────────────────
   const id = newId();
-  const ext = (path.extname(file.name) || ".png").toLowerCase();
-  const safeExt = ext === ".jpg" ? ".jpeg" : ext;
-  const contentType = safeExt === ".png" ? "image/png" : "image/jpeg";
+  // Use the magic-detected extension, not the filename (prevents ext spoofing)
+  const safeExt = magic.ext;
+  const contentType = MIME_MAP[safeExt] ?? "image/png";
 
   const imageUri = await uploadBlob(blobImagePath(id, 1), buf, contentType);
 
+  const nftName = `${name} #1`;
   const metaJson = JSON.stringify(
     {
-      name: `${name} #1`,
+      name: nftName,
       description: note || `A gifted 1/1 NFT.`,
       image: imageUri,
-      attributes: note ? [{ trait_type: "Note", value: note }] : [],
+      attributes: [
+        ...(note ? [{ trait_type: "Note", value: note }] : []),
+        { trait_type: "Type", value: "Gift" },
+        { trait_type: "Edition", value: "1/1" },
+      ],
+      properties: {
+        files: [{ uri: imageUri, type: contentType }],
+        category: "image",
+      },
     },
     null,
     2,
   );
   const metadataUri = await uploadBlobText(blobMetadataPath(id, 1), metaJson);
 
+  // ── On-chain mint (if platform key is configured) ──────────────────────
+  let mintResult: Awaited<ReturnType<typeof mintGiftNft>> = null;
+  let mintError: string | null = null;
+  try {
+    mintResult = await mintGiftNft({ name: nftName, metadataUri, recipient });
+  } catch (err) {
+    console.error("[gift] on-chain mint failed:", err);
+    mintError = err instanceof Error ? err.message : String(err);
+  }
+
+  // ── Persist collection record ──────────────────────────────────────────
   const token: GeneratedToken = {
     tokenId: 1,
     dna: "gift",
-    attributes: note ? [{ trait_type: "Note", value: note }] : [],
+    attributes: [
+      ...(note ? [{ trait_type: "Note", value: note }] : []),
+      { trait_type: "Type", value: "Gift" },
+      { trait_type: "Edition", value: "1/1" },
+    ],
     imageRelPath: `images/1${safeExt}`,
     metadataRelPath: "metadata/1.json",
     imageUri,
     metadataUri,
     owner: recipient,
+    ...(mintResult ? {
+      assetAddress: mintResult.assetAddress,
+      mintTxUrl: mintResult.explorerUrl,
+    } : {}),
   };
 
   const collection: Collection = {
@@ -113,12 +159,23 @@ export async function POST(req: NextRequest) {
     publicMintOpen: false,
     secondaryEnabled: false,
     holderPageUnlocked: false,
-    irysPublished: false,
+    irysPublished: !!mintResult,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     tokens: [token],
   };
 
   await saveCollection(collection);
-  return NextResponse.json({ collection, recipient });
+
+  return NextResponse.json({
+    collection,
+    recipient,
+    onChain: !!mintResult,
+    ...(mintResult ? {
+      assetAddress: mintResult.assetAddress,
+      explorerUrl: mintResult.explorerUrl,
+      network: mintResult.network,
+    } : {}),
+    ...(mintError ? { mintWarning: `On-chain mint skipped: ${mintError}` } : {}),
+  });
 }

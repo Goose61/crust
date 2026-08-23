@@ -26,7 +26,7 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Dough Boi · NFT marketplace",
+  title: "Dough Boi™ · NFT marketplace",
   description:
     "Launch NFT collections on Solana. Auto metadata, permanent storage, programmable fees, and in-ecosystem secondary trading.",
 };

@@ -119,6 +119,10 @@ export type GeneratedToken = {
   imageUri?: string;
   metadataUri?: string;
   owner?: string | null;
+  /** On-chain Metaplex Core asset address, set after a real mint */
+  assetAddress?: string;
+  /** Explorer link for the mint transaction */
+  mintTxUrl?: string;
 };
 
 export type CollectionSocials = {

@@ -13,7 +13,7 @@ const Logo: React.FC = () => {
       />
       <span className="flex flex-col leading-none">
         <span className="font-bold text-[1.1rem] text-white tracking-tight">
-          Dough Boi
+          Dough Boi™
         </span>
         <span className="font-[family-name:var(--font-body)] text-[11px] tracking-[0.08em] text-white/50">
           NFT marketplace

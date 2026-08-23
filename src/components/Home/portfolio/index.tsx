@@ -39,7 +39,7 @@ const Portfolio = () => {
             </div>
             <p className='text-lg text-white/70'>
               Creators get a compositor, rarity ranks, quotes, gift mint, and a native market.
-              Collectors get one place to mint and resell. Dough Boi art is the visual language.
+              Collectors get one place to mint and resell. Dough Boi™ art is the visual language.
               Your collection is the proof it works.
             </p>
 
