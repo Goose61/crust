@@ -40,8 +40,8 @@ export function getRpcUrl(network?: SolanaNetwork, from?: EnvLike): string {
 
   // On the client side, route Solana RPC calls through our own serverless proxy
   // instead of hitting the public endpoint directly.  Browser-originated requests
-  // to api.devnet.solana.com are rate-limited with JSON-RPC 403 by Triton when
-  // the request comes from Phantom's in-app browser or similar environments.
+  // to api.devnet.solana.com and api.mainnet-beta.solana.com are rate-limited with
+  // JSON-RPC 403 when the request comes from a browser or Phantom's in-app browser.
   // Server-to-server calls made by the proxy are not subject to those limits.
   // `from` being set means an explicit env override was requested (server only).
   if (typeof window !== "undefined" && !from) {
@@ -63,7 +63,7 @@ export function getRpcUrl(network?: SolanaNetwork, from?: EnvLike): string {
   );
 }
 
-/** Direct cluster RPC URL — never the browser proxy. Used by Irys confirmation polling. */
+/** Direct cluster RPC URL — server-side only. Browser code must use getRpcUrl() (proxy). */
 export function getDirectRpcUrl(network?: SolanaNetwork, from?: EnvLike): string {
   const e = from ?? env();
   const net = network ?? getSolanaNetwork(e);

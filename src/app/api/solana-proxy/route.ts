@@ -2,8 +2,8 @@
  * Server-side Solana JSON-RPC proxy.
  *
  * Forwards browser Solana RPC calls to the real endpoint from the server.
- * This bypasses the 403 "Access forbidden" rate-limit that api.devnet.solana.com
- * returns for browser-originated requests (e.g. from Phantom's in-app browser),
+ * This bypasses the 403 "Access forbidden" rate-limit that public Solana RPCs
+ * return for browser-originated requests (e.g. from Phantom's in-app browser),
  * because server-to-server calls are not subject to the same restrictions.
  *
  * Usage: POST /api/solana-proxy?n=devnet  or  ?n=mainnet

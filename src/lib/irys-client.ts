@@ -14,7 +14,7 @@ import {
 } from "./irys-shared";
 import {
   getClientNetwork,
-  getDirectRpcUrl,
+  getRpcUrl,
   isDevnetNetwork,
   type SolanaNetwork,
 } from "./solana-config";
@@ -73,7 +73,7 @@ async function rpcCall<T>(rpcUrl: string, method: string, params: unknown[]): Pr
 async function txExistsOnNetwork(signature: string, network: SolanaNetwork): Promise<boolean> {
   try {
     const result = await rpcCall<{ value: Array<SignatureStatus | null> }>(
-      getDirectRpcUrl(network),
+      getRpcUrl(network),
       "getSignatureStatuses",
       [[signature], { searchTransactionHistory: true }],
     );
@@ -257,7 +257,7 @@ export async function createPhantomIrysUploader(
   if (!phantom) throw new Error("Phantom wallet is required. Install it from phantom.app.");
 
   const devnet = isDevnetNetwork(network);
-  const directRpc = getDirectRpcUrl(network);
+  const rpcUrl = getRpcUrl(network);
 
   const [{ WebUploader }, { WebSolana }] = await Promise.all([
     import("@irys/web-upload"),
@@ -267,7 +267,7 @@ export async function createPhantomIrysUploader(
   const wallet = phantomToIrysWallet(phantom);
   const builder = WebUploader(WebSolana)
     .withProvider(wallet)
-    .withRpc(directRpc)
+    .withRpc(rpcUrl)
     .withTokenOptions({ finality: "confirmed" });
 
   return (devnet ? await builder.devnet().build() : await builder.mainnet().build()) as IrysInstance;
@@ -322,7 +322,7 @@ export async function uploadGiftWithPhantom(params: {
   onStage?: (stage: "funding" | "uploading") => void;
 }): Promise<{ imageUri: string; metadataUri: string }> {
   const network = params.network ?? (await getClientNetwork());
-  const confirmRpc = getDirectRpcUrl(network);
+  const confirmRpc = getRpcUrl(network);
   const phantom = getPhantomProvider();
   if (!phantom?.publicKey) throw new Error("Connect Phantom first.");
 
