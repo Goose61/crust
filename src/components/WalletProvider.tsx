@@ -2,7 +2,6 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getPhantomProvider } from "@/lib/irys-client";
-import { buildPhantomBrowseUrl, isMobileDevice } from "@/lib/phantom-connect";
 import { PhantomConnectModal } from "@/components/PhantomConnectModal";
 import { getRpcUrl, isDevnetNetwork } from "@/lib/solana-config";
 
@@ -92,12 +91,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
       return;
     }
-
-    if (isMobileDevice()) {
-      window.location.href = buildPhantomBrowseUrl(window.location.href);
-      return;
-    }
-
+    // No Phantom extension detected — always show the modal.
+    // Never navigate away with window.location.href because that loses form state.
     setConnectModalOpen(true);
   }, []);
 

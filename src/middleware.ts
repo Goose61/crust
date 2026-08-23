@@ -34,10 +34,35 @@ export function middleware(req: NextRequest) {
     "Content-Security-Policy",
     [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Next.js requires unsafe-eval in dev
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "img-src 'self' data: blob: https://gateway.irys.xyz https://arweave.net https://blob.vercel-storage.com",
-      "connect-src 'self' https://api.slicechain.io https://pay.slicechain.io https://api.coingecko.com https://blob.vercel-storage.com",
+      // Irys upload nodes + Solana RPCs + Jupiter price + blob storage
+      [
+        "connect-src 'self'",
+        // Irys uploader endpoints (mainnet + devnet)
+        "https://uploader.irys.xyz",
+        "https://devnet.irys.xyz",
+        "https://node1.irys.xyz",
+        "https://gateway.irys.xyz",
+        // Solana RPC (http + websocket)
+        "https://api.devnet.solana.com",
+        "https://api.mainnet.solana.com",
+        "https://api.mainnet-beta.solana.com",
+        "wss://api.devnet.solana.com",
+        "wss://api.mainnet.solana.com",
+        "wss://api.mainnet-beta.solana.com",
+        // Jupiter price API
+        "https://lite-api.jup.ag",
+        "https://api.jup.ag",
+        // Arweave gateway
+        "https://arweave.net",
+        // SlicePay + CoinGecko + Vercel Blob
+        "https://api.slicechain.io",
+        "https://pay.slicechain.io",
+        "https://api.coingecko.com",
+        "https://blob.vercel-storage.com",
+      ].join(" "),
       "font-src 'self' https://fonts.gstatic.com",
       "frame-src https://dexscreener.com",
       "frame-ancestors 'none'",

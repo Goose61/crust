@@ -38,7 +38,7 @@ async function detectImageAsync(file: File): Promise<{ ext: string; contentType:
 }
 
 export default function GiftPage() {
-  const { publicKey, connect, signAndSendTx } = useWallet();
+  const { publicKey, connecting, connect, signAndSendTx } = useWallet();
 
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -267,9 +267,19 @@ export default function GiftPage() {
       </p>
 
       {!publicKey && (
-        <p className="mt-3 text-sm text-white/50">
-          Connect Phantom to sign storage and mint transactions from your wallet.
-        </p>
+        <div className="mt-4 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-white/80">
+            Connect your Phantom wallet first — then fill out the form below.
+          </p>
+          <button
+            type="button"
+            onClick={() => void connect()}
+            disabled={connecting}
+            className="shrink-0 rounded-full bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary/80 disabled:opacity-50"
+          >
+            {connecting ? "Connecting…" : "Connect Phantom"}
+          </button>
+        </div>
       )}
 
       <div className="mt-4 rounded border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60 space-y-1">
