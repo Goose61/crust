@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { Collection, GeneratedToken } from "@/lib/types";
 import { useWallet, isDevnet } from "./WalletProvider";
 import { formatUsd, isTokenSold, nftPrice, tokenImageSrc, tokenName } from "@/lib/collection-ui";
+import { readJsonResponse } from "@/lib/fetch-json";
 
 export function CollectionMint({ initial }: { initial: Collection }) {
   const { publicKey, connect, signAndSendTx } = useWallet();
@@ -43,12 +44,12 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ collectionId: collection.id, payer: publicKey }),
       });
-      const data = await res.json() as {
+      const data = await readJsonResponse<{
         txBase64?: string;
         assetAddress?: string;
         collection?: Collection;
         error?: string;
-      };
+      }>(res);
       if (!res.ok) throw new Error(data.error ?? "Could not build mint transaction");
 
       setMessage("Approve the mint in Phantom…");
@@ -59,7 +60,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ collectionId: collection.id, txSignature }),
       });
-      const confirmed = await confirm.json() as { collection?: Collection; error?: string };
+      const confirmed = await readJsonResponse<{ collection?: Collection; error?: string }>(confirm);
       if (!confirm.ok) throw new Error(confirmed.error ?? "Could not confirm mint");
 
       if (confirmed.collection) setCollection(confirmed.collection);

@@ -44,6 +44,25 @@ export function isValidSolanaAddress(addr: string): boolean {
   }
 }
 
+/** Decode platform secret key — supports base58 string or JSON byte array. */
+function parseSecretKey(raw: string): Uint8Array {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("[")) {
+    const arr = JSON.parse(trimmed) as number[];
+    if (!Array.isArray(arr) || arr.length !== 64) {
+      throw new Error(`ARWEAVE_SOLANA_KEY JSON array must be 64 bytes; got ${arr?.length ?? 0}.`);
+    }
+    return new Uint8Array(arr);
+  }
+  const decoded = decodeBase58(trimmed);
+  if (decoded.length !== 64) {
+    throw new Error(
+      `ARWEAVE_SOLANA_KEY decoded to ${decoded.length} bytes; expected 64.`,
+    );
+  }
+  return decoded;
+}
+
 /** Decode a base58 string to a Uint8Array (no external dependency). */
 function decodeBase58(b58: string): Uint8Array {
   const ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -113,12 +132,7 @@ export async function buildGiftTransaction(params: {
   const umi = createUmi(rpcUrl).use(mplCore());
 
   // Platform keypair is the update authority (never leaves the server)
-  const secretBytes = decodeBase58(rawKey);
-  if (secretBytes.length !== 64) {
-    throw new Error(
-      `ARWEAVE_SOLANA_KEY decoded to ${secretBytes.length} bytes; expected 64.`,
-    );
-  }
+  const secretBytes = parseSecretKey(rawKey);
   const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(secretBytes);
   umi.use(keypairIdentity(authorityKeypair));
 
@@ -141,6 +155,7 @@ export async function buildGiftTransaction(params: {
     owner: umiPublicKey(params.recipient),
     payer: payerNoop, // minter pays chain fees
   })
+    .useV0() // versioned tx — required for Phantom signAndSendTransaction
     .setBlockhash(await umi.rpc.getLatestBlockhash())
     .buildAndSign(umi);
 

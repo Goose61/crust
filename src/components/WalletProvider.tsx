@@ -105,8 +105,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const signAndSendTx = useCallback(async (txBase64: string): Promise<string> => {
     const p = getProvider();
     if (!p) throw new Error("Connect Phantom to continue.");
-    const { VersionedTransaction } = await import("@solana/web3.js");
-    const tx = VersionedTransaction.deserialize(Buffer.from(txBase64, "base64"));
+    const { VersionedTransaction, Transaction } = await import("@solana/web3.js");
+    const bytes = Buffer.from(txBase64, "base64");
+    let tx: unknown;
+    try {
+      tx = VersionedTransaction.deserialize(bytes);
+    } catch {
+      tx = Transaction.from(bytes);
+    }
     const result = await p.signAndSendTransaction(tx);
     return sigToBase58(result.signature);
   }, []);
