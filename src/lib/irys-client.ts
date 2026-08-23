@@ -66,12 +66,13 @@ export function phantomToIrysWallet(phantom: PhantomLike) {
       });
       const sig = sigToBase58(result.signature);
 
-      // Irys calls getTransaction(txId, {commitment:"finalized"}) immediately
-      // after sendTransaction returns. If the tx isn't on-chain yet it gets null
-      // and throws "Confirmed tx not found". Poll until at least "confirmed"
-      // before returning so Irys can find the transaction.
+      // Irys calls confirmationPoll() then getTransaction(txId, {commitment:"finalized"})
+      // after sendTransaction returns. On mainnet, finalization takes 30–90 s, but the
+      // Irys internal poll only waits 30 s — so it times out and submitTransaction fails
+      // with "Confirmed tx not found". We must wait for "finalized" here so that Irys
+      // finds the transaction immediately when it checks.
       if (connection.getSignatureStatuses) {
-        for (let attempt = 0; attempt < 45; attempt++) {
+        for (let attempt = 0; attempt < 90; attempt++) {
           await new Promise<void>((r) => setTimeout(r, 2000));
           try {
             const res = await connection.getSignatureStatuses!([sig]);
@@ -80,7 +81,8 @@ export function phantomToIrysWallet(phantom: PhantomLike) {
               throw new Error(`Fund transaction failed: ${JSON.stringify(status.err)}`);
             }
             const cs = status?.confirmationStatus;
-            if (cs === "confirmed" || cs === "finalized") break;
+            // Wait for finalized (not just confirmed) — mainnet can take 60–90 s.
+            if (cs === "finalized") break;
           } catch (e) {
             if (e instanceof Error && e.message.startsWith("Fund transaction failed")) throw e;
             // transient RPC error — keep polling
@@ -128,7 +130,14 @@ export async function createPhantomIrysUploader(
   ]);
 
   const wallet = phantomToIrysWallet(phantom);
-  const builder = WebUploader(WebSolana).withProvider(wallet).withRpc(rpcUrl);
+  // Use "confirmed" finality for the SDK's internal confirmationPoll / getTransaction checks.
+  // Our sendTransaction adapter already waits for "finalized" before returning, so by the time
+  // the SDK polls the chain the tx is guaranteed to be at least confirmed — this prevents
+  // the SDK's 30-second poll from timing out before finalization on mainnet.
+  const builder = WebUploader(WebSolana)
+    .withProvider(wallet)
+    .withRpc(rpcUrl)
+    .withTokenOptions({ finality: "confirmed" });
   return (devnet ? await builder.devnet().build() : await builder.mainnet().build()) as IrysInstance;
 }
 

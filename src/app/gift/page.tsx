@@ -95,7 +95,7 @@ export default function GiftPage() {
   const stageLabel: Record<typeof stage, string> = {
     idle: publicKey ? "Send gift" : "Connect Phantom",
     storage: "Approve storage payment in Phantom…",
-    uploading: "Uploading to Arweave…",
+    uploading: "Uploading to Arweave — waiting for confirmation (up to 2 min)…",
     building: "Preparing mint transaction…",
     minting: "Approve mint in Phantom…",
     confirming: "Confirming on-chain…",
