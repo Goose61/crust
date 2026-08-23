@@ -89,3 +89,38 @@ export function isDevnetNetwork(network?: SolanaNetwork): boolean {
 export function explorerClusterQuery(network?: SolanaNetwork): string {
   return isDevnetNetwork(network) ? "?cluster=devnet" : "";
 }
+
+let clientNetworkCache: SolanaNetwork | null = null;
+let clientNetworkPromise: Promise<SolanaNetwork> | null = null;
+
+/**
+ * Cluster the live server is configured for — fetched at runtime from /api/network.
+ * Prefer this over getSolanaNetwork() in browser code so Vercel env changes apply
+ * without rebuilding (NEXT_PUBLIC_* is inlined at build time).
+ */
+export async function getClientNetwork(): Promise<SolanaNetwork> {
+  if (typeof window === "undefined") return getSolanaNetwork();
+  if (clientNetworkCache) return clientNetworkCache;
+  if (!clientNetworkPromise) {
+    clientNetworkPromise = (async () => {
+      try {
+        const res = await fetch("/api/network", { cache: "no-store" });
+        if (res.ok) {
+          const data = (await res.json()) as { network?: string };
+          clientNetworkCache = data.network === "mainnet" ? "mainnet" : "devnet";
+          return clientNetworkCache;
+        }
+      } catch {
+        /* fall through to build-time default */
+      }
+      clientNetworkCache = getSolanaNetwork();
+      return clientNetworkCache;
+    })();
+  }
+  return clientNetworkPromise;
+}
+
+export function clearClientNetworkCache(): void {
+  clientNetworkCache = null;
+  clientNetworkPromise = null;
+}

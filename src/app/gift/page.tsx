@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useWallet, networkName } from "@/components/WalletProvider";
-import { explorerClusterQuery } from "@/lib/solana-config";
-import { uploadGiftWithPhantom } from "@/lib/irys-client";
+import { useWallet } from "@/components/WalletProvider";
+import { explorerClusterQuery, getClientNetwork, type SolanaNetwork } from "@/lib/solana-config";
+import { networkLabel, phantomNetworkHint, uploadGiftWithPhantom } from "@/lib/irys-client";
 
 type FeeBreakdown = {
   user: {
@@ -59,6 +59,11 @@ export default function GiftPage() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [dragOver, setDragOver] = useState(false);
+  const [siteNetwork, setSiteNetwork] = useState<SolanaNetwork | null>(null);
+
+  useEffect(() => {
+    void getClientNetwork().then(setSiteNetwork);
+  }, []);
 
   function applyImageFile(next: File | null) {
     if (!next) return;
@@ -116,6 +121,7 @@ export default function GiftPage() {
     setError(null);
 
     try {
+      const network = await getClientNetwork();
       const imageInfo = await detectImageAsync(file);
       if (!imageInfo) throw new Error("Use a PNG, JPEG, or WebP image.");
 
@@ -123,11 +129,13 @@ export default function GiftPage() {
       const nftName = `${name.trim() || "Gift NFT"} #1`;
 
       // ── Step 1: Arweave storage via Phantom (fund tx + upload signatures) ──
-      setStage("uploading");
+      setStage("storage");
 
       const { imageUri, metadataUri } = await uploadGiftWithPhantom({
         imageBytes,
         imageContentType: imageInfo.contentType,
+        network,
+        onStage: (s) => setStage(s === "funding" ? "storage" : "uploading"),
         buildMetadata: (uri) =>
           JSON.stringify(
             {
@@ -164,7 +172,7 @@ export default function GiftPage() {
           metadataUri,
           contentType: imageInfo.contentType,
           imageExt: imageInfo.ext,
-          network: networkName(),
+          network,
         }),
       });
       const data = await res.json() as {
@@ -189,7 +197,7 @@ export default function GiftPage() {
       await fetch("/api/gift", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionId: data.collectionId, txSignature, network: networkName() }),
+        body: JSON.stringify({ collectionId: data.collectionId, txSignature, network }),
       });
 
       setResult({
@@ -288,6 +296,15 @@ export default function GiftPage() {
           >
             {connecting ? "Connecting…" : "Connect Phantom"}
           </button>
+        </div>
+      )}
+
+      {siteNetwork && (
+        <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/90">
+          <p className="font-medium text-amber-100">
+            Site network: {networkLabel(siteNetwork)}
+          </p>
+          <p className="mt-1 text-xs text-amber-100/70">{phantomNetworkHint(siteNetwork)}</p>
         </div>
       )}
 
