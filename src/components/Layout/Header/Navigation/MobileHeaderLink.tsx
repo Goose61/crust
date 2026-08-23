@@ -51,7 +51,7 @@ const MobileHeaderLink: React.FC<{
         href={item.href}
         onClick={() => handleLinkClick(item.href)}
         className={`text-base flex items-center justify-between w-fit py-2 transition-all duration-300 focus:outline-hidden hover:text-primary ${
-          isActive(item.href) ? "text-primary font-semibold" : "text-muted"
+          isActive(item.href) ? "text-primary font-semibold" : "text-white"
         }`}
       >
         {item.label}
@@ -83,7 +83,7 @@ const MobileHeaderLink: React.FC<{
               className={`block py-2 px-4 rounded-md transition-all duration-300 ${
                 isActive(subItem.href)
                   ? "bg-primary/10 text-primary font-medium"
-                  : "text-muted hover:bg-primary/10 hover:text-primary"
+                  : "text-white/80 hover:bg-primary/10 hover:text-primary"
               }`}
             >
               {subItem.label}

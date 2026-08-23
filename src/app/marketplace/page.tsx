@@ -8,7 +8,7 @@ import Perks from "@/components/Home/perks";
 import Faq from "@/components/Home/Faq";
 
 export const metadata: Metadata = {
-  title: "Dough Boi™ · NFT marketplace",
+  title: "Dough Boi · NFT marketplace",
 };
 
 export default function Home() {

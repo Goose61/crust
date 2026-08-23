@@ -38,7 +38,7 @@ async function detectImageAsync(file: File): Promise<{ ext: string; contentType:
 }
 
 export default function GiftPage() {
-  const { publicKey, connect, signAndSendTx, isPhantom } = useWallet();
+  const { publicKey, connect, signAndSendTx } = useWallet();
 
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -57,6 +57,25 @@ export default function GiftPage() {
   const [result, setResult] = useState<GiftResult | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [dragOver, setDragOver] = useState(false);
+
+  function applyImageFile(next: File | null) {
+    if (!next) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(next.type)) {
+      setError("Use a PNG, JPEG, or WebP image.");
+      return;
+    }
+    setFile(next);
+    setPreview(URL.createObjectURL(next));
+    setError(null);
+  }
+
+  function onDropImage(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    applyImageFile(e.dataTransfer.files?.[0] ?? null);
+  }
 
   useEffect(() => {
     clearTimeout(debounceRef.current);
@@ -247,12 +266,9 @@ export default function GiftPage() {
         The recipient receives the NFT for free. Your private key never leaves Phantom.
       </p>
 
-      {!isPhantom && (
-        <p className="mt-3 text-sm text-yellow-400/80">
-          Phantom wallet is required.{" "}
-          <a href="https://phantom.app/" target="_blank" rel="noopener noreferrer" className="underline">
-            Install Phantom ↗
-          </a>
+      {!publicKey && (
+        <p className="mt-3 text-sm text-white/50">
+          Connect Phantom to sign storage and mint transactions from your wallet.
         </p>
       )}
 
@@ -269,8 +285,26 @@ export default function GiftPage() {
         </div>
       )}
 
-      <form className="mt-10 grid gap-8 md:grid-cols-[220px_1fr]" onSubmit={handleSubmit}>
-        <label className="rounded-2xl border border-white/15 bg-white/5 flex aspect-square cursor-pointer flex-col items-center justify-center overflow-hidden text-center text-sm text-white/50 hover:border-white/30">
+      <form
+        className="mt-10 grid gap-8 md:grid-cols-[220px_1fr]"
+        onSubmit={handleSubmit}
+        onDragOver={(e) => e.preventDefault()}
+      >
+        <label
+          className={`rounded-2xl border bg-white/5 flex aspect-square cursor-pointer flex-col items-center justify-center overflow-hidden text-center text-sm text-white/50 hover:border-white/30 ${
+            dragOver ? "border-primary/60 bg-primary/5" : "border-white/15"
+          }`}
+          onDrop={onDropImage}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+          }}
+        >
           {preview ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={preview} alt="Preview" className="h-full w-full object-cover" />
@@ -285,10 +319,8 @@ export default function GiftPage() {
             accept="image/png,image/jpeg,image/webp"
             className="hidden"
             onChange={(e) => {
-              const next = e.target.files?.[0] ?? null;
-              setFile(next);
-              setPreview(next ? URL.createObjectURL(next) : null);
-              setError(null);
+              applyImageFile(e.target.files?.[0] ?? null);
+              e.target.value = "";
             }}
           />
         </label>

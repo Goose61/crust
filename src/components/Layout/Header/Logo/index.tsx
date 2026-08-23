@@ -11,11 +11,11 @@ const Logo: React.FC = () => {
         height={36}
         className="h-9 w-9 rounded-full object-cover"
       />
-      <span className="flex flex-col leading-none">
-        <span className="font-bold text-[1.1rem] text-white tracking-tight">
-          Dough Boi™
+      <span className="flex min-w-0 flex-col leading-none">
+        <span className="truncate font-bold text-base text-white tracking-tight sm:text-[1.1rem]">
+          Dough Boi
         </span>
-        <span className="font-[family-name:var(--font-body)] text-[11px] tracking-[0.08em] text-white/50">
+        <span className="hidden font-[family-name:var(--font-body)] text-[11px] tracking-[0.08em] text-white/50 sm:block">
           NFT marketplace
         </span>
       </span>

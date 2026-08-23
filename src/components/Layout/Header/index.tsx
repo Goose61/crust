@@ -27,14 +27,14 @@ const Header: React.FC = () => {
 
   return (
     <header
-      className="sticky top-0 isolate z-50 h-[72px] w-full backdrop-blur-[14px]"
+      className="sticky top-0 isolate z-50 min-h-[64px] w-full backdrop-blur-[14px] sm:min-h-[72px]"
       style={{
         borderBottom: "1px solid var(--header-border)",
         background: "var(--header-bg)",
       }}
     >
-      <div className="mx-auto flex h-full w-full max-w-[1240px] items-center gap-5 px-4">
-        <div onClick={() => setActiveHash("")} className="shrink-0 cursor-pointer">
+      <div className="mx-auto flex min-h-[64px] w-full max-w-[1240px] items-center gap-3 px-3 sm:min-h-[72px] sm:gap-5 sm:px-4">
+        <div onClick={() => setActiveHash("")} className="min-w-0 shrink cursor-pointer">
           <Logo />
         </div>
         <nav className="ml-auto hidden items-center gap-5 lg:flex">

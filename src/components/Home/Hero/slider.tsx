@@ -30,7 +30,7 @@ const CardSlider = () => {
           Featured <span className="text-primary">artwork</span>
         </p>
         <h2 className="text-3xl font-medium text-foreground sm:text-5xl">
-          Dough Boi™ NFTs on this marketplace
+          Dough Boi NFTs on this marketplace
         </h2>
       </div>
 
@@ -47,7 +47,7 @@ const CardSlider = () => {
                   className="aspect-square w-full rounded-xl object-cover"
                 />
                 <p className="mt-3 text-center text-sm font-medium text-foreground">
-                  Dough Boi™ #{nft.id}
+                  Dough Boi #{nft.id}
                 </p>
               </CardContent>
             </Card>

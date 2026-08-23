@@ -2,6 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getPhantomProvider } from "@/lib/irys-client";
+import { buildPhantomBrowseUrl, isMobileDevice } from "@/lib/phantom-connect";
+import { PhantomConnectModal } from "@/components/PhantomConnectModal";
 import { getRpcUrl, isDevnetNetwork } from "@/lib/solana-config";
 
 type WalletCtx = {
@@ -71,6 +73,7 @@ export function isDevnet(): boolean {
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectModalOpen, setConnectModalOpen] = useState(false);
 
   useEffect(() => {
     const p = getProvider();
@@ -79,17 +82,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const connect = useCallback(async () => {
     const p = getProvider();
-    if (!p) {
-      window.open("https://phantom.app/", "_blank");
-      throw new Error("Phantom wallet is required. Install the extension and refresh.");
+    if (p) {
+      setConnecting(true);
+      try {
+        const res = await p.connect();
+        setPublicKey(res.publicKey.toBase58());
+      } finally {
+        setConnecting(false);
+      }
+      return;
     }
-    setConnecting(true);
-    try {
-      const res = await p.connect();
-      setPublicKey(res.publicKey.toBase58());
-    } finally {
-      setConnecting(false);
+
+    if (isMobileDevice()) {
+      window.location.href = buildPhantomBrowseUrl(window.location.href);
+      return;
     }
+
+    setConnectModalOpen(true);
   }, []);
 
   const disconnect = useCallback(() => {
@@ -119,7 +128,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [publicKey, connecting, connect, disconnect, signAndSendTx],
   );
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={value}>
+      {children}
+      <PhantomConnectModal open={connectModalOpen} onOpenChange={setConnectModalOpen} />
+    </Ctx.Provider>
+  );
 }
 
 export function useWallet() {

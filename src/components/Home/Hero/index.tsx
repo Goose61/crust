@@ -36,10 +36,10 @@ const Hero = () => {
                 listings that never graduate away.
               </p>
             </div>
-            <div className="flex items-center justify-center gap-4 md:justify-start">
+            <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center sm:justify-start">
               <Button
                 render={<Link href="/launch" />}
-                className="flex h-12 cursor-pointer items-center gap-2 rounded-lg border border-primary bg-primary px-7 py-6 text-base font-semibold text-white hover:bg-primary/80"
+                className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary bg-primary px-5 text-sm font-semibold text-white hover:bg-primary/80 sm:h-12 sm:px-7 sm:text-base"
               >
                 Launch a collection
                 <Image src="/images/icons/icon-arrow.svg" alt="arrow-icon" width={20} height={20} />
@@ -47,7 +47,7 @@ const Hero = () => {
               <Button
                 render={<Link href="/market" />}
                 variant="outline"
-                className="h-12 rounded-lg border-white/20 px-6 text-white hover:border-white/40"
+                className="h-11 rounded-lg border-white/20 px-5 text-sm text-white hover:border-white/40 sm:h-12 sm:px-6 sm:text-base"
               >
                 Discover drops
               </Button>
