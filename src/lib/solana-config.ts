@@ -1,0 +1,54 @@
+/**
+ * Solana cluster configuration.
+ *
+ * Set NEXT_PUBLIC_SOLANA_NETWORK (client) and SOLANA_NETWORK (server) to
+ * `devnet` or `mainnet`. RPC URLs for each cluster are configured separately
+ * so switching networks is a one-line change in .env.local.
+ */
+
+export type SolanaNetwork = "devnet" | "mainnet";
+
+export const SOLANA_RPC_DEVNET = "https://api.devnet.solana.com";
+export const SOLANA_RPC_MAINNET = "https://api.mainnet.solana.com";
+
+type EnvLike = Record<string, string | undefined>;
+
+function env(): EnvLike {
+  return typeof process !== "undefined" ? process.env : {};
+}
+
+/** Active cluster — defaults to mainnet when unset. */
+export function getSolanaNetwork(from?: EnvLike): SolanaNetwork {
+  const e = from ?? env();
+  const raw = e.NEXT_PUBLIC_SOLANA_NETWORK ?? e.SOLANA_NETWORK ?? "mainnet";
+  return raw === "devnet" ? "devnet" : "mainnet";
+}
+
+/** RPC endpoint for the active cluster (or an explicit override). */
+export function getRpcUrl(network?: SolanaNetwork, from?: EnvLike): string {
+  const e = from ?? env();
+  const net = network ?? getSolanaNetwork(e);
+
+  if (net === "devnet") {
+    return (
+      e.SOLANA_RPC_URL_DEVNET ??
+      e.NEXT_PUBLIC_SOLANA_RPC_URL_DEVNET ??
+      SOLANA_RPC_DEVNET
+    );
+  }
+
+  return (
+    e.SOLANA_RPC_URL_MAINNET ??
+    e.NEXT_PUBLIC_SOLANA_RPC_URL_MAINNET ??
+    SOLANA_RPC_MAINNET
+  );
+}
+
+export function isDevnetNetwork(network?: SolanaNetwork): boolean {
+  return (network ?? getSolanaNetwork()) === "devnet";
+}
+
+/** Solana Explorer `?cluster=` query suffix for the active network. */
+export function explorerClusterQuery(network?: SolanaNetwork): string {
+  return isDevnetNetwork(network) ? "?cluster=devnet" : "";
+}

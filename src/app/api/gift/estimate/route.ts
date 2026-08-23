@@ -1,4 +1,5 @@
 import { fetchIrysPriceLamports } from "@/lib/irys-shared";
+import { isDevnetNetwork } from "@/lib/solana-config";
 
 export const runtime = "nodejs";
 
@@ -6,8 +7,6 @@ export const runtime = "nodejs";
 const SOLANA_RENT_LAMPORTS = BigInt(2900000);
 const MPL_PROTOCOL_LAMPORTS = BigInt(1500000);
 const TX_FEE_LAMPORTS = BigInt(5000);
-// SOL transfer to ephemeral wallet + Irys fund tx overheads
-const EPHEMERAL_OVERHEAD_LAMPORTS = BigInt(20000);
 
 async function getSolPrice(): Promise<number> {
   try {
@@ -27,7 +26,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const imageBytes = Math.max(0, parseInt(url.searchParams.get("imageBytes") ?? "0", 10) || 0);
   const metaBytes = 512;
-  const devnet = process.env.SOLANA_RPC_URL?.includes("devnet") ?? false;
+  const devnet = isDevnetNetwork();
 
   const [imageLamports, metaLamports, solPrice] = await Promise.all([
     imageBytes > 0 ? fetchIrysPriceLamports(imageBytes, devnet) : Promise.resolve(BigInt(0)),
@@ -36,7 +35,8 @@ export async function GET(req: Request) {
   ]);
 
   const storageLamports = imageLamports + metaLamports;
-  const storageWithBuffer = storageLamports + storageLamports / 6n + EPHEMERAL_OVERHEAD_LAMPORTS;
+  // Small buffer for Irys fund transaction fee
+  const storageWithBuffer = storageLamports + storageLamports / 10n + BigInt(5000);
 
   const chainLamports = SOLANA_RENT_LAMPORTS + MPL_PROTOCOL_LAMPORTS + TX_FEE_LAMPORTS;
   const totalLamports = storageWithBuffer + chainLamports;

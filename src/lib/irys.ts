@@ -11,9 +11,9 @@ export {
 } from "./irys-shared";
 
 import { fetchIrysPriceLamports } from "./irys-shared";
+import { isDevnetNetwork } from "./solana-config";
 
 /** @deprecated Server-side upload removed — minter pays via browser Irys uploader. */
 export async function getIrysPrice(bytes: number): Promise<bigint> {
-  const devnet = process.env.SOLANA_RPC_URL?.includes("devnet") ?? false;
-  return fetchIrysPriceLamports(bytes, devnet);
+  return fetchIrysPriceLamports(bytes, isDevnetNetwork());
 }

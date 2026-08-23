@@ -1,14 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Keypair } from "@solana/web3.js";
 import { useWallet, rpcUrl, isDevnet } from "@/components/WalletProvider";
-import { CreateWalletModal, type NewWallet } from "@/components/CreateWalletModal";
-import {
-  secretKeyToBase58,
-  ephemeralFundingLamports,
-} from "@/lib/irys-client";
-import { fetchIrysPriceLamports } from "@/lib/irys-shared";
+import { uploadGiftWithPhantom } from "@/lib/irys-client";
 
 type FeeBreakdown = {
   user: {
@@ -25,7 +19,6 @@ type GiftResult = {
   txSignature?: string;
   storageMethod: string;
   onChain: boolean;
-  recipientNote?: string;
 };
 
 function fmtSol(sol: number) {
@@ -45,22 +38,20 @@ async function detectImageAsync(file: File): Promise<{ ext: string; contentType:
 }
 
 export default function GiftPage() {
-  const { publicKey, connect, signAndSendTx, transferSol } = useWallet();
+  const { publicKey, connect, signAndSendTx, isPhantom } = useWallet();
 
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [name, setName] = useState("Gift NFT");
   const [recipient, setRecipient] = useState("");
   const [note, setNote] = useState("");
-  const [createdWallet, setCreatedWallet] = useState<NewWallet | null>(null);
-  const [showCreateWallet, setShowCreateWallet] = useState(false);
 
   const [fees, setFees] = useState<FeeBreakdown | null>(null);
   const [feesLoading, setFeesLoading] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<
-    "idle" | "funding" | "uploading" | "building" | "signing" | "confirming"
+    "idle" | "storage" | "uploading" | "building" | "minting" | "confirming"
   >("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GiftResult | null>(null);
@@ -82,19 +73,24 @@ export default function GiftPage() {
   }, [file]);
 
   const stageLabel: Record<typeof stage, string> = {
-    idle: publicKey ? "Send gift" : "Connect wallet",
-    funding: "Approve storage payment in wallet…",
+    idle: publicKey ? "Send gift" : "Connect Phantom",
+    storage: "Approve storage payment in Phantom…",
     uploading: "Uploading to Arweave…",
     building: "Preparing mint transaction…",
-    signing: "Approve mint in wallet…",
+    minting: "Approve mint in Phantom…",
     confirming: "Confirming on-chain…",
   };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) { setError("Choose an image first."); return; }
-    if (!recipient.trim()) { setError("Enter a recipient wallet or create one."); return; }
-    if (!publicKey) { await connect(); return; }
+    if (!recipient.trim()) { setError("Enter the recipient wallet address."); return; }
+    if (!publicKey) {
+      try { await connect(); } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not connect Phantom.");
+      }
+      return;
+    }
 
     setBusy(true);
     setError(null);
@@ -106,56 +102,37 @@ export default function GiftPage() {
       const imageBytes = new Uint8Array(await file.arrayBuffer());
       const nftName = `${name.trim() || "Gift NFT"} #1`;
 
-      // ── Step 1: fund ephemeral wallet for Irys uploads (minter pays) ──
-      setStage("funding");
-      const devnet = isDevnet();
-      const [imagePrice, metaPrice] = await Promise.all([
-        fetchIrysPriceLamports(imageBytes.length, devnet),
-        fetchIrysPriceLamports(512, devnet),
-      ]);
-      const fundLamports = ephemeralFundingLamports(imagePrice, metaPrice);
-
-      const ephemeral = Keypair.generate();
-      await transferSol(ephemeral.publicKey.toBase58(), fundLamports);
-      // Brief pause so the ephemeral wallet balance is visible to Irys
-      await new Promise((r) => setTimeout(r, 2_000));
-
-      // ── Step 2: upload image + metadata to Arweave via Irys ───────────
+      // ── Step 1: Arweave storage via Phantom (fund tx + upload signatures) ──
       setStage("uploading");
-      const secretB58 = secretKeyToBase58(ephemeral.secretKey);
 
-      const { imageUri, metadataUri } = await (async () => {
-        const irysMod = await import("@/lib/irys-client");
-        const irys = await irysMod.createBrowserIrysUploader(secretB58, rpcUrl(), devnet);
-        const imageUri = await irysMod.fundAndUpload(irys, imageBytes, imageInfo.contentType);
-        const finalMeta = JSON.stringify(
-          {
-            name: nftName,
-            description: note || "A 1/1 gift NFT.",
-            image: imageUri,
-            attributes: [
-              ...(note ? [{ trait_type: "Note", value: note }] : []),
-              { trait_type: "Type", value: "Gift" },
-              { trait_type: "Edition", value: "1/1" },
-            ],
-            properties: {
-              files: [{ uri: imageUri, type: imageInfo.contentType }],
-              category: "image",
-              creators: [{ address: publicKey, share: 100 }],
+      const { imageUri, metadataUri } = await uploadGiftWithPhantom({
+        imageBytes,
+        imageContentType: imageInfo.contentType,
+        buildMetadata: (uri) =>
+          JSON.stringify(
+            {
+              name: nftName,
+              description: note || "A 1/1 gift NFT.",
+              image: uri,
+              attributes: [
+                ...(note ? [{ trait_type: "Note", value: note }] : []),
+                { trait_type: "Type", value: "Gift" },
+                { trait_type: "Edition", value: "1/1" },
+              ],
+              properties: {
+                files: [{ uri, type: imageInfo.contentType }],
+                category: "image",
+                creators: [{ address: publicKey, share: 100 }],
+              },
             },
-          },
-          null,
-          2,
-        );
-        const metadataUri = await irysMod.fundAndUpload(
-          irys,
-          new TextEncoder().encode(finalMeta),
-          "application/json",
-        );
-        return { imageUri, metadataUri };
-      })();
+            null,
+            2,
+          ),
+        rpcUrl: rpcUrl(),
+        devnet: isDevnet(),
+      });
 
-      // ── Step 3: build partially-signed mint tx ────────────────────────
+      // ── Step 2: build partially-signed mint tx ────────────────────────
       setStage("building");
       const res = await fetch("/api/gift", {
         method: "POST",
@@ -181,19 +158,12 @@ export default function GiftPage() {
       if (!res.ok) throw new Error(data.error ?? "Failed to build mint transaction");
 
       if (!data.requiresWalletSignature || !data.txBase64) {
-        setResult({
-          collectionId: data.collectionId!,
-          storageMethod: "arweave",
-          onChain: false,
-          recipientNote: createdWallet
-            ? "Share the private key with the recipient so they can access the NFT."
-            : undefined,
-        });
+        setResult({ collectionId: data.collectionId!, storageMethod: "arweave", onChain: false });
         return;
       }
 
-      // ── Step 4: minter signs + submits mint tx ────────────────────────
-      setStage("signing");
+      // ── Step 3: mint NFT (Phantom tx #2) ──────────────────────────────
+      setStage("minting");
       const txSignature = await signAndSendTx(data.txBase64);
 
       setStage("confirming");
@@ -209,13 +179,12 @@ export default function GiftPage() {
         txSignature,
         storageMethod: "arweave",
         onChain: true,
-        recipientNote: createdWallet
-          ? "Share the saved private key with the recipient so they can import the wallet in Phantom."
-          : undefined,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
-      setError(msg.toLowerCase().includes("rejected") ? "Transaction cancelled in wallet." : msg);
+      setError(msg.toLowerCase().includes("rejected") || msg.toLowerCase().includes("cancel")
+        ? "Request cancelled in Phantom."
+        : msg);
       setStage("idle");
     } finally {
       setBusy(false);
@@ -230,10 +199,7 @@ export default function GiftPage() {
         <h1 className="text-3xl font-semibold text-white mb-2">
           {result.onChain ? "Gift sent on-chain" : "Gift recorded"}
         </h1>
-        {result.recipientNote && (
-          <p className="text-yellow-300/80 text-sm mb-4 max-w-md mx-auto">{result.recipientNote}</p>
-        )}
-        <div className="space-y-3 mb-8 text-left">
+        <div className="space-y-3 mb-8 text-left mt-8">
           {result.assetAddress && (
             <div className="rounded border border-white/10 bg-white/5 px-4 py-3">
               <p className="text-xs text-white/40 mb-1 uppercase tracking-wider">Asset address</p>
@@ -247,7 +213,7 @@ export default function GiftPage() {
               rel="noopener noreferrer"
               className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-primary hover:border-primary/40"
             >
-              View transaction on Solana Explorer ↗
+              View mint transaction on Solana Explorer ↗
             </a>
           )}
           <a
@@ -262,7 +228,7 @@ export default function GiftPage() {
           onClick={() => {
             setResult(null); setFile(null); setPreview(null);
             setName("Gift NFT"); setRecipient(""); setNote("");
-            setCreatedWallet(null); setFees(null); setError(null); setStage("idle");
+            setFees(null); setError(null); setStage("idle");
           }}
           className="text-sm text-white/40 hover:text-white/70"
         >
@@ -274,18 +240,28 @@ export default function GiftPage() {
 
   return (
     <main className="container mx-auto max-w-3xl px-4 py-12">
-      <CreateWalletModal
-        open={showCreateWallet}
-        onClose={() => setShowCreateWallet(false)}
-        onUse={(w) => { setRecipient(w.publicKey); setCreatedWallet(w); }}
-      />
-
       <p className="font-[family-name:var(--font-mono)] text-[11px] tracking-[0.22em] text-white/50">1 / 1</p>
       <h1 className="mt-2 text-5xl md:text-7xl">Gift an NFT</h1>
       <p className="mt-4 max-w-xl text-sm leading-6 text-white/50">
-        Upload an image and send it to any wallet. You pay all fees: permanent Arweave
-        storage and Solana mint costs. The recipient receives the NFT for free.
+        Connect with Phantom to send a 1/1 NFT. You pay all fees from your wallet.
+        The recipient receives the NFT for free. Your private key never leaves Phantom.
       </p>
+
+      {!isPhantom && (
+        <p className="mt-3 text-sm text-yellow-400/80">
+          Phantom wallet is required.{" "}
+          <a href="https://phantom.app/" target="_blank" rel="noopener noreferrer" className="underline">
+            Install Phantom ↗
+          </a>
+        </p>
+      )}
+
+      <div className="mt-4 rounded border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60 space-y-1">
+        <p className="font-medium text-white/80">What Phantom will ask you to approve</p>
+        <p>1. <span className="text-white">Storage payment</span> — funds permanent Arweave upload (one Solana transaction)</p>
+        <p>2. <span className="text-white">Mint transaction</span> — creates the NFT on-chain and sends it to the recipient</p>
+        <p className="text-white/40 pt-1">Upload steps may also show message signature prompts (no extra SOL).</p>
+      </div>
 
       {error && (
         <div className="mt-4 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
@@ -323,28 +299,16 @@ export default function GiftPage() {
             <input className="input" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} />
           </label>
 
-          <div className="block text-sm">
+          <label className="block text-sm">
             <span className="mb-1 block text-white/50">Recipient wallet</span>
             <input
               className="input font-mono text-xs"
-              placeholder="Solana public key (base58)"
+              placeholder="Solana address (base58)"
               value={recipient}
               spellCheck={false}
-              onChange={(e) => { setRecipient(e.target.value); setCreatedWallet(null); setError(null); }}
+              onChange={(e) => { setRecipient(e.target.value); setError(null); }}
             />
-            <button
-              type="button"
-              onClick={() => setShowCreateWallet(true)}
-              className="mt-2 text-xs text-primary hover:underline"
-            >
-              Create new wallet for recipient
-            </button>
-            {createdWallet && (
-              <p className="mt-1 text-xs text-yellow-400/80">
-                New wallet selected. Make sure you saved the private key.
-              </p>
-            )}
-          </div>
+          </label>
 
           <label className="block text-sm">
             <span className="mb-1 block text-white/50">Note (optional)</span>
@@ -384,12 +348,6 @@ export default function GiftPage() {
           >
             {busy ? stageLabel[stage] : stageLabel.idle}
           </button>
-
-          {(stage === "funding" || stage === "signing") && (
-            <p className="text-xs text-white/40 text-center">
-              Check Phantom and approve the transaction to continue.
-            </p>
-          )}
         </div>
       </form>
     </main>

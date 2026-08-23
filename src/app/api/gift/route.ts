@@ -11,6 +11,7 @@ import { newId, saveCollection, slugify, getCollection } from "@/lib/store";
 import { rateLimit } from "@/lib/rate-limit";
 import { defaultPayments, type Collection, type GeneratedToken } from "@/lib/types";
 import { buildGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
+import { explorerClusterQuery } from "@/lib/solana-config";
 
 export const runtime = "nodejs";
 
@@ -155,9 +156,7 @@ export async function PATCH(req: NextRequest) {
   collection.status = "sold_out";
   collection.mintedCount = 1;
   if (collection.tokens[0]) {
-    collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${
-      process.env.SOLANA_RPC_URL?.includes("devnet") ? "?cluster=devnet" : ""
-    }`;
+    collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery()}`;
   }
   collection.updatedAt = new Date().toISOString();
 

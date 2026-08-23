@@ -1,25 +1,26 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { getPhantomProvider } from "@/lib/irys-client";
+import { getRpcUrl, isDevnetNetwork } from "@/lib/solana-config";
 
 type WalletCtx = {
   publicKey: string | null;
   connecting: boolean;
+  isPhantom: boolean;
   connect: () => Promise<void>;
   disconnect: () => void;
-  /** Sign a partially-signed Metaplex Core tx and broadcast. Returns signature. */
+  /** Sign a partially-signed Metaplex Core tx in Phantom and broadcast. */
   signAndSendTx: (txBase64: string) => Promise<string>;
-  /** Transfer SOL from connected wallet to another address. Returns signature. */
-  transferSol: (toAddress: string, lamports: number | bigint) => Promise<string>;
 };
 
 const Ctx = createContext<WalletCtx>({
   publicKey: null,
   connecting: false,
+  isPhantom: false,
   connect: async () => {},
   disconnect: () => {},
   signAndSendTx: async () => { throw new Error("Wallet not connected"); },
-  transferSol: async () => { throw new Error("Wallet not connected"); },
 });
 
 type PhantomResult = { signature: Uint8Array | string };
@@ -36,9 +37,8 @@ type Phantom = {
 };
 
 function getProvider(): Phantom | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as { solana?: Phantom; phantom?: { solana?: Phantom } };
-  return w.solana?.isPhantom ? w.solana : w.phantom?.solana ?? w.solana ?? null;
+  const p = getPhantomProvider() as Phantom | null;
+  return p?.isPhantom ? p : null;
 }
 
 function sigToBase58(sig: Uint8Array | string): string {
@@ -61,14 +61,11 @@ function sigToBase58(sig: Uint8Array | string): string {
 }
 
 export function rpcUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
-    "https://api.mainnet-beta.solana.com"
-  );
+  return getRpcUrl();
 }
 
 export function isDevnet(): boolean {
-  return rpcUrl().includes("devnet");
+  return isDevnetNetwork();
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
@@ -84,7 +81,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const p = getProvider();
     if (!p) {
       window.open("https://phantom.app/", "_blank");
-      return;
+      throw new Error("Phantom wallet is required. Install the extension and refresh.");
     }
     setConnecting(true);
     try {
@@ -103,39 +100,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const signAndSendTx = useCallback(async (txBase64: string): Promise<string> => {
     const p = getProvider();
-    if (!p) throw new Error("No wallet found. Install Phantom to continue.");
+    if (!p) throw new Error("Connect Phantom to continue.");
     const { VersionedTransaction } = await import("@solana/web3.js");
     const tx = VersionedTransaction.deserialize(Buffer.from(txBase64, "base64"));
     const result = await p.signAndSendTransaction(tx);
     return sigToBase58(result.signature);
   }, []);
 
-  const transferSol = useCallback(async (toAddress: string, lamports: number | bigint): Promise<string> => {
-    const p = getProvider();
-    if (!p?.publicKey) throw new Error("Connect your wallet first.");
-    const { Connection, PublicKey, SystemProgram, Transaction } = await import("@solana/web3.js");
-    const connection = new Connection(rpcUrl(), "confirmed");
-    const from = new PublicKey(p.publicKey.toBase58());
-    const to = new PublicKey(toAddress);
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-    const tx = new Transaction({
-      feePayer: from,
-      blockhash,
-      lastValidBlockHeight,
-    }).add(
-      SystemProgram.transfer({
-        fromPubkey: from,
-        toPubkey: to,
-        lamports: typeof lamports === "bigint" ? Number(lamports) : lamports,
-      }),
-    );
-    const result = await p.signAndSendTransaction(tx);
-    return sigToBase58(result.signature);
-  }, []);
-
   const value = useMemo(
-    () => ({ publicKey, connecting, connect, disconnect, signAndSendTx, transferSol }),
-    [publicKey, connecting, connect, disconnect, signAndSendTx, transferSol],
+    () => ({
+      publicKey,
+      connecting,
+      isPhantom: !!getProvider(),
+      connect,
+      disconnect,
+      signAndSendTx,
+    }),
+    [publicKey, connecting, connect, disconnect, signAndSendTx],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

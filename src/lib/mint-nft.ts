@@ -88,8 +88,8 @@ export async function buildGiftTransaction(params: {
   const rawKey = process.env.ARWEAVE_SOLANA_KEY;
   if (!rawKey) return null; // demo / staging mode
 
-  const rpcUrl =
-    process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
+  const { getRpcUrl } = await import("./solana-config");
+  const rpcUrl = getRpcUrl();
 
   // Dynamic imports keep ESM packages out of the client bundle
   const [umiBundle, mplCoreMod, umiCore, umiSerializers] = await Promise.all([
