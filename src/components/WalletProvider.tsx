@@ -7,12 +7,10 @@ type WalletCtx = {
   connecting: boolean;
   connect: () => Promise<void>;
   disconnect: () => void;
-  /**
-   * Sign a partially-signed transaction (base64) with the connected wallet
-   * and broadcast it. Returns the transaction signature string.
-   * Throws if the wallet is not connected or the user rejects.
-   */
+  /** Sign a partially-signed Metaplex Core tx and broadcast. Returns signature. */
   signAndSendTx: (txBase64: string) => Promise<string>;
+  /** Transfer SOL from connected wallet to another address. Returns signature. */
+  transferSol: (toAddress: string, lamports: number | bigint) => Promise<string>;
 };
 
 const Ctx = createContext<WalletCtx>({
@@ -21,6 +19,7 @@ const Ctx = createContext<WalletCtx>({
   connect: async () => {},
   disconnect: () => {},
   signAndSendTx: async () => { throw new Error("Wallet not connected"); },
+  transferSol: async () => { throw new Error("Wallet not connected"); },
 });
 
 type PhantomResult = { signature: Uint8Array | string };
@@ -30,7 +29,6 @@ type Phantom = {
   publicKey?: { toBase58: () => string };
   connect: () => Promise<{ publicKey: { toBase58: () => string } }>;
   disconnect: () => Promise<void>;
-  /** Signs and submits a VersionedTransaction, returns the signature */
   signAndSendTransaction: (
     tx: unknown,
     options?: { skipPreflight?: boolean },
@@ -41,6 +39,36 @@ function getProvider(): Phantom | null {
   if (typeof window === "undefined") return null;
   const w = window as unknown as { solana?: Phantom; phantom?: { solana?: Phantom } };
   return w.solana?.isPhantom ? w.solana : w.phantom?.solana ?? w.solana ?? null;
+}
+
+function sigToBase58(sig: Uint8Array | string): string {
+  if (typeof sig === "string") return sig;
+  const ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const bytes8 = sig as Uint8Array;
+  const digits: number[] = [0];
+  for (const byte of bytes8) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i++) {
+      carry += digits[i] << 8;
+      digits[i] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
+  }
+  let result = "";
+  for (let i = 0; i < bytes8.length && bytes8[i] === 0; i++) result += "1";
+  return result + digits.reverse().map((d) => ALPHA[d]).join("");
+}
+
+export function rpcUrl(): string {
+  return (
+    process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
+    "https://api.mainnet-beta.solana.com"
+  );
+}
+
+export function isDevnet(): boolean {
+  return rpcUrl().includes("devnet");
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
@@ -73,51 +101,41 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setPublicKey(null);
   }, []);
 
-  /**
-   * Deserialize a base64-encoded partially-signed UMI/Metaplex Core
-   * transaction, have Phantom add the fee-payer signature, and broadcast it.
-   *
-   * Uses @solana/web3.js VersionedTransaction (lazy import — avoids bundling
-   * web3.js during SSR / non-wallet pages).
-   */
   const signAndSendTx = useCallback(async (txBase64: string): Promise<string> => {
     const p = getProvider();
     if (!p) throw new Error("No wallet found. Install Phantom to continue.");
-
-    // Lazy import to keep web3.js out of the initial bundle
     const { VersionedTransaction } = await import("@solana/web3.js");
-
-    const bytes = Buffer.from(txBase64, "base64");
-    const tx = VersionedTransaction.deserialize(bytes);
-
-    // Phantom signs as fee payer (adds its signature) and broadcasts
+    const tx = VersionedTransaction.deserialize(Buffer.from(txBase64, "base64"));
     const result = await p.signAndSendTransaction(tx);
+    return sigToBase58(result.signature);
+  }, []);
 
-    // Phantom returns signature as Uint8Array or base58 string depending on version
-    const sig = result.signature;
-    if (typeof sig === "string") return sig;
-
-    // Convert Uint8Array → base58 string
-    const ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    const bytes8 = sig as Uint8Array;
-    const digits: number[] = [0];
-    for (const byte of bytes8) {
-      let carry = byte;
-      for (let i = 0; i < digits.length; i++) {
-        carry += digits[i] << 8;
-        digits[i] = carry % 58;
-        carry = Math.floor(carry / 58);
-      }
-      while (carry > 0) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
-    }
-    let result58 = "";
-    for (let i = 0; i < bytes8.length && bytes8[i] === 0; i++) result58 += "1";
-    return result58 + digits.reverse().map((d) => ALPHA[d]).join("");
+  const transferSol = useCallback(async (toAddress: string, lamports: number | bigint): Promise<string> => {
+    const p = getProvider();
+    if (!p?.publicKey) throw new Error("Connect your wallet first.");
+    const { Connection, PublicKey, SystemProgram, Transaction } = await import("@solana/web3.js");
+    const connection = new Connection(rpcUrl(), "confirmed");
+    const from = new PublicKey(p.publicKey.toBase58());
+    const to = new PublicKey(toAddress);
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+    const tx = new Transaction({
+      feePayer: from,
+      blockhash,
+      lastValidBlockHeight,
+    }).add(
+      SystemProgram.transfer({
+        fromPubkey: from,
+        toPubkey: to,
+        lamports: typeof lamports === "bigint" ? Number(lamports) : lamports,
+      }),
+    );
+    const result = await p.signAndSendTransaction(tx);
+    return sigToBase58(result.signature);
   }, []);
 
   const value = useMemo(
-    () => ({ publicKey, connecting, connect, disconnect, signAndSendTx }),
-    [publicKey, connecting, connect, disconnect, signAndSendTx],
+    () => ({ publicKey, connecting, connect, disconnect, signAndSendTx, transferSol }),
+    [publicKey, connecting, connect, disconnect, signAndSendTx, transferSol],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
