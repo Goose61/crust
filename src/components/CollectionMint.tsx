@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Collection, GeneratedToken } from "@/lib/types";
-import { useWallet, isDevnet } from "./WalletProvider";
+import { useWallet, isDevnet, networkName } from "./WalletProvider";
 import { formatUsd, isTokenSold, nftPrice, tokenImageSrc, tokenName } from "@/lib/collection-ui";
 import { readJsonResponse } from "@/lib/fetch-json";
 
@@ -42,7 +42,11 @@ export function CollectionMint({ initial }: { initial: Collection }) {
       const res = await fetch("/api/gift/mint", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionId: collection.id, payer: publicKey }),
+        body: JSON.stringify({
+          collectionId: collection.id,
+          payer: publicKey,
+          network: networkName(),
+        }),
       });
       const data = await readJsonResponse<{
         txBase64?: string;
@@ -52,13 +56,13 @@ export function CollectionMint({ initial }: { initial: Collection }) {
       }>(res);
       if (!res.ok) throw new Error(data.error ?? "Could not build mint transaction");
 
-      setMessage("Approve the mint in Phantom…");
+      setMessage(`Approve the mint in Phantom (${networkName()})…`);
       const txSignature = await signAndSendTx(data.txBase64!);
 
       const confirm = await fetch("/api/gift/mint", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionId: collection.id, txSignature }),
+        body: JSON.stringify({ collectionId: collection.id, txSignature, network: networkName() }),
       });
       const confirmed = await readJsonResponse<{ collection?: Collection; error?: string }>(confirm);
       if (!confirm.ok) throw new Error(confirmed.error ?? "Could not confirm mint");
@@ -161,7 +165,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
             <p className="text-sm font-medium text-amber-200">Stored on Arweave — not minted on-chain yet</p>
             <p className="text-xs text-amber-200/70 mt-0.5">
               The image and metadata are permanent, but the Solana NFT was never created.
-              Connect Phantom and mint to send it to the recipient wallet.
+              Phantom must be on <strong>{networkName()}</strong> (Settings → Developer Settings → Testnet Mode for devnet).
             </p>
           </div>
           <button

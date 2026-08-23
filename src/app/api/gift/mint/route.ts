@@ -7,16 +7,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCollection, updateCollection, saveCollection } from "@/lib/store";
 import { buildGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
-import { explorerClusterQuery } from "@/lib/solana-config";
+import { explorerClusterQuery, parseNetwork } from "@/lib/solana-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as { collectionId?: string; payer?: string };
+    const body = await req.json() as { collectionId?: string; payer?: string; network?: string };
     const collectionId = String(body.collectionId || "").trim();
     const payer = String(body.payer || "").trim();
+    const network = parseNetwork(body.network);
 
     if (!collectionId)
       return NextResponse.json({ error: "collectionId required" }, { status: 400 });
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
       metadataUri: token.metadataUri,
       recipient,
       payer,
+      network,
     });
 
     if (!txResult) {
@@ -68,6 +70,7 @@ export async function POST(req: NextRequest) {
       collectionId,
       txBase64: txResult.txBase64,
       assetAddress: txResult.assetAddress,
+      network,
       requiresWalletSignature: true,
     });
   } catch (err) {
@@ -80,8 +83,9 @@ export async function POST(req: NextRequest) {
 /** Confirm mint after wallet signature (same as PATCH /api/gift). */
 export async function PATCH(req: NextRequest) {
   try {
-    const body = await req.json() as { collectionId?: string; txSignature?: string };
+    const body = await req.json() as { collectionId?: string; txSignature?: string; network?: string };
     const { collectionId, txSignature } = body;
+    const network = parseNetwork(body.network);
 
     if (!collectionId || !txSignature)
       return NextResponse.json({ error: "collectionId and txSignature required" }, { status: 400 });
@@ -93,7 +97,7 @@ export async function PATCH(req: NextRequest) {
     collection.status = "sold_out";
     collection.mintedCount = 1;
     if (collection.tokens[0]) {
-      collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery()}`;
+      collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery(network)}`;
     }
     collection.updatedAt = new Date().toISOString();
 

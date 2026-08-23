@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getPhantomProvider } from "@/lib/irys-client";
 import { PhantomConnectModal } from "@/components/PhantomConnectModal";
-import { getRpcUrl, isDevnetNetwork } from "@/lib/solana-config";
+import { getRpcUrl, getSolanaNetwork, isDevnetNetwork } from "@/lib/solana-config";
 
 type WalletCtx = {
   publicKey: string | null;
@@ -65,6 +65,10 @@ export function rpcUrl(): string {
   return getRpcUrl();
 }
 
+export function networkName(): string {
+  return getSolanaNetwork();
+}
+
 export function isDevnet(): boolean {
   return isDevnetNetwork();
 }
@@ -113,7 +117,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     } catch {
       tx = Transaction.from(bytes);
     }
-    const result = await p.signAndSendTransaction(tx);
+    const result = await p.signAndSendTransaction(tx, {
+      // Partially-signed txs often fail Phantom simulation; submit directly.
+      skipPreflight: true,
+    });
     return sigToBase58(result.signature);
   }, []);
 

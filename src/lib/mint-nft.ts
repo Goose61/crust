@@ -20,7 +20,7 @@ import {
 } from "@metaplex-foundation/umi";
 import { create } from "@metaplex-foundation/mpl-core";
 import { base64 } from "@metaplex-foundation/umi/serializers";
-import { getRpcUrl } from "./solana-config";
+import { getRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
 import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
 
 export type BuildTxResult = {
@@ -109,11 +109,14 @@ export async function buildGiftTransaction(params: {
   metadataUri: string;
   recipient: string;
   payer: string;
+  /** Cluster the user's Phantom wallet is on — must match for simulation/submit. */
+  network?: SolanaNetwork;
 }): Promise<BuildTxResult | null> {
   const rawKey = process.env.ARWEAVE_SOLANA_KEY;
   if (!rawKey) return null; // demo / staging mode
 
-  const rpcUrl = getRpcUrl();
+  const network = params.network ?? getSolanaNetwork();
+  const rpcUrl = getRpcUrl(network);
   const umi = createMintUmi();
 
   const secretBytes = parseSecretKey(rawKey);

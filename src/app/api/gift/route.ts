@@ -11,7 +11,7 @@ import { newId, saveCollection, slugify, getCollection } from "@/lib/store";
 import { rateLimit } from "@/lib/rate-limit";
 import { defaultPayments, type Collection, type GeneratedToken } from "@/lib/types";
 import { buildGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
-import { explorerClusterQuery } from "@/lib/solana-config";
+import { explorerClusterQuery, parseNetwork } from "@/lib/solana-config";
 
 export const runtime = "nodejs";
 
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     metadataUri?: string;
     contentType?: string;
     imageExt?: string;
+    network?: string;
   };
 
   const name = String(body.name || "Gift NFT").trim() || "Gift NFT";
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
   const metadataUri = String(body.metadataUri || "").trim();
   const contentType = String(body.contentType || "image/png");
   const safeExt = String(body.imageExt || ".png");
+  const network = parseNetwork(body.network);
 
   if (!recipient || !isValidSolanaAddress(recipient))
     return NextResponse.json({ error: "Recipient is not a valid Solana address" }, { status: 400 });
@@ -64,6 +66,7 @@ export async function POST(req: NextRequest) {
     metadataUri,
     recipient,
     payer,
+    network,
   });
 
   if (txResult) {
@@ -138,6 +141,7 @@ export async function POST(req: NextRequest) {
     storageMethod: "arweave",
     txBase64,
     assetAddress,
+    network,
     requiresWalletSignature: !!txBase64,
     ...(txBase64
       ? {}
@@ -149,8 +153,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const body = await req.json() as { collectionId?: string; txSignature?: string };
+  const body = await req.json() as { collectionId?: string; txSignature?: string; network?: string };
   const { collectionId, txSignature } = body;
+  const network = parseNetwork(body.network);
 
   if (!collectionId || !txSignature)
     return NextResponse.json({ error: "collectionId and txSignature required" }, { status: 400 });
@@ -162,7 +167,7 @@ export async function PATCH(req: NextRequest) {
   collection.status = "sold_out";
   collection.mintedCount = 1;
   if (collection.tokens[0]) {
-    collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery()}`;
+    collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery(network)}`;
   }
   collection.updatedAt = new Date().toISOString();
 

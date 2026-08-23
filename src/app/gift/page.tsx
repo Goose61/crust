@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useWallet, rpcUrl, isDevnet } from "@/components/WalletProvider";
+import { useWallet, rpcUrl, isDevnet, networkName } from "@/components/WalletProvider";
 import { uploadGiftWithPhantom } from "@/lib/irys-client";
 
 type FeeBreakdown = {
@@ -165,6 +165,7 @@ export default function GiftPage() {
           metadataUri,
           contentType: imageInfo.contentType,
           imageExt: imageInfo.ext,
+          network: networkName(),
         }),
       });
       const data = await res.json() as {
@@ -189,7 +190,7 @@ export default function GiftPage() {
       await fetch("/api/gift", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionId: data.collectionId, txSignature }),
+        body: JSON.stringify({ collectionId: data.collectionId, txSignature, network: networkName() }),
       });
 
       setResult({

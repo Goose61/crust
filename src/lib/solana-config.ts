@@ -20,8 +20,17 @@ function env(): EnvLike {
 /** Active cluster — defaults to devnet when unset (safer for testing). */
 export function getSolanaNetwork(from?: EnvLike): SolanaNetwork {
   const e = from ?? env();
-  const raw = e.NEXT_PUBLIC_SOLANA_NETWORK ?? e.SOLANA_NETWORK ?? "devnet";
+  // Server runtime: prefer SOLANA_NETWORK. Browser: prefer NEXT_PUBLIC_*.
+  const raw =
+    typeof window === "undefined"
+      ? (e.SOLANA_NETWORK ?? e.NEXT_PUBLIC_SOLANA_NETWORK ?? "devnet")
+      : (e.NEXT_PUBLIC_SOLANA_NETWORK ?? e.SOLANA_NETWORK ?? "devnet");
   return raw === "mainnet" ? "mainnet" : "devnet";
+}
+
+/** Parse an explicit network string from a client request body. */
+export function parseNetwork(value: unknown): SolanaNetwork {
+  return value === "mainnet" ? "mainnet" : "devnet";
 }
 
 /** RPC endpoint for the active cluster (or an explicit override). */
