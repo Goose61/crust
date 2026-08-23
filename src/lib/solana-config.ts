@@ -29,6 +29,16 @@ export function getRpcUrl(network?: SolanaNetwork, from?: EnvLike): string {
   const e = from ?? env();
   const net = network ?? getSolanaNetwork(e);
 
+  // On the client side, route Solana RPC calls through our own serverless proxy
+  // instead of hitting the public endpoint directly.  Browser-originated requests
+  // to api.devnet.solana.com are rate-limited with JSON-RPC 403 by Triton when
+  // the request comes from Phantom's in-app browser or similar environments.
+  // Server-to-server calls made by the proxy are not subject to those limits.
+  // `from` being set means an explicit env override was requested (server only).
+  if (typeof window !== "undefined" && !from) {
+    return `${window.location.origin}/api/solana-proxy?n=${net}`;
+  }
+
   if (net === "devnet") {
     return (
       e.SOLANA_RPC_URL_DEVNET ??
