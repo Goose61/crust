@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useWallet, rpcUrl, isDevnet, networkName } from "@/components/WalletProvider";
+import { useWallet, networkName } from "@/components/WalletProvider";
 import { explorerClusterQuery } from "@/lib/solana-config";
 import { uploadGiftWithPhantom } from "@/lib/irys-client";
 
@@ -148,8 +148,6 @@ export default function GiftPage() {
             null,
             2,
           ),
-        rpcUrl: rpcUrl(),
-        devnet: isDevnet(),
       });
 
       // ── Step 2: build partially-signed mint tx ────────────────────────

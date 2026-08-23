@@ -7,7 +7,12 @@
  * @see https://www.npmjs.com/package/@irys/web-upload-solana
  */
 
-import { IRYS_GATEWAY } from "./irys-shared";
+import {
+  IRYS_GATEWAY,
+  IRYS_NODE_DEVNET,
+  IRYS_NODE_MAINNET,
+} from "./irys-shared";
+import { getDirectRpcUrl, getSolanaNetwork, isDevnetNetwork } from "./solana-config";
 
 export { IRYS_GATEWAY };
 
@@ -22,14 +27,6 @@ type PhantomLike = {
     message: Uint8Array,
     display?: string,
   ) => Promise<{ signature: Uint8Array }>;
-};
-
-/** Minimal shape of the Solana Connection the Irys SDK passes to sendTransaction. */
-type IrysConnection = {
-  getSignatureStatuses?: (
-    sigs: string[],
-  ) => Promise<{ value: Array<{ confirmationStatus?: string; err?: unknown } | null> }>;
-  [k: string]: unknown;
 };
 
 function sigToBase58(sig: Uint8Array | string): string {
@@ -51,14 +48,99 @@ function sigToBase58(sig: Uint8Array | string): string {
   return r + digits.reverse().map((d) => ALPHA[d]).join("");
 }
 
+type SignatureStatus = {
+  err?: unknown;
+  confirmationStatus?: string;
+};
+
+async function rpcCall<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
+  const res = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const json = (await res.json()) as { result?: T; error?: { message?: string } };
+  if (json.error) throw new Error(json.error.message ?? "RPC error");
+  return json.result as T;
+}
+
+/** Poll until the tx is visible on-chain at least at `confirmed`. Throws if dropped. */
+async function waitForTxConfirmed(
+  signature: string,
+  rpcUrl: string,
+  opts?: { maxAttempts?: number; intervalMs?: number },
+): Promise<void> {
+  const maxAttempts = opts?.maxAttempts ?? 90;
+  const intervalMs = opts?.intervalMs ?? 2000;
+  let lastStatus: SignatureStatus | null | undefined;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const result = await rpcCall<{ value: Array<SignatureStatus | null> }>(
+      rpcUrl,
+      "getSignatureStatuses",
+      [[signature], { searchTransactionHistory: true }],
+    );
+    const status = result?.value?.[0];
+    lastStatus = status;
+
+    if (status?.err) {
+      throw new Error(`Fund transaction failed on-chain: ${JSON.stringify(status.err)}`);
+    }
+    const cs = status?.confirmationStatus;
+    if (cs === "confirmed" || cs === "finalized") return;
+
+    await new Promise<void>((r) => setTimeout(r, intervalMs));
+  }
+
+  if (!lastStatus) {
+    throw new Error(
+      "Fund transaction was not found on-chain — it may have been dropped. " +
+        "Approve quickly in Phantom and try again. Make sure Phantom is on the same network as this site.",
+    );
+  }
+  throw new Error("Fund transaction confirmation timed out. Check Solana Explorer, then try again.");
+}
+
+/** Retry posting a fund tx to the Irys bundler until it accepts it. */
+async function submitFundTxToBundler(txId: string, devnet: boolean): Promise<void> {
+  const node = devnet ? IRYS_NODE_DEVNET : IRYS_NODE_MAINNET;
+  let lastError = "";
+
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const res = await fetch(`${node}/account/balance/solana`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tx_id: txId }),
+    });
+    if (res.status === 200 || res.status === 202) return;
+
+    lastError = await res.text();
+    const retryable =
+      lastError.includes("Confirmed tx not found") ||
+      lastError.includes("not found") ||
+      res.status === 400 ||
+      res.status === 502 ||
+      res.status === 503;
+    if (!retryable) {
+      throw new Error(`Bundler rejected fund tx: ${res.status} ${lastError}`);
+    }
+    await new Promise<void>((r) => setTimeout(r, 2000 + attempt * 250));
+  }
+
+  throw new Error(
+    `Bundler could not confirm fund tx ${txId}. Your SOL may still have been sent — ` +
+      `save this id and retry in a minute, or contact support.`,
+  );
+}
+
 /** Minimal adapter expected by @irys/web-upload-solana injected signer. */
-export function phantomToIrysWallet(phantom: PhantomLike) {
+export function phantomToIrysWallet(phantom: PhantomLike, confirmRpcUrl: string) {
   if (!phantom.publicKey) throw new Error("Connect Phantom first.");
   return {
     publicKey: phantom.publicKey,
     sendTransaction: async (
       tx: unknown,
-      connection: IrysConnection,
+      _connection: unknown,
       opts?: { skipPreflight?: boolean },
     ) => {
       const result = await phantom.signAndSendTransaction(tx, {
@@ -66,30 +148,9 @@ export function phantomToIrysWallet(phantom: PhantomLike) {
       });
       const sig = sigToBase58(result.signature);
 
-      // Irys calls confirmationPoll() then getTransaction(txId, {commitment:"finalized"})
-      // after sendTransaction returns. On mainnet, finalization takes 30–90 s, but the
-      // Irys internal poll only waits 30 s — so it times out and submitTransaction fails
-      // with "Confirmed tx not found". We must wait for "finalized" here so that Irys
-      // finds the transaction immediately when it checks.
-      if (connection.getSignatureStatuses) {
-        for (let attempt = 0; attempt < 90; attempt++) {
-          await new Promise<void>((r) => setTimeout(r, 2000));
-          try {
-            const res = await connection.getSignatureStatuses!([sig]);
-            const status = res?.value?.[0];
-            if (status?.err) {
-              throw new Error(`Fund transaction failed: ${JSON.stringify(status.err)}`);
-            }
-            const cs = status?.confirmationStatus;
-            // Wait for finalized (not just confirmed) — mainnet can take 60–90 s.
-            if (cs === "finalized") break;
-          } catch (e) {
-            if (e instanceof Error && e.message.startsWith("Fund transaction failed")) throw e;
-            // transient RPC error — keep polling
-          }
-        }
-      }
-
+      // Phantom broadcasts via its own RPC; poll our direct cluster RPC until the
+      // tx is confirmed before Irys posts to the bundler (which only retries ~5 s).
+      await waitForTxConfirmed(sig, confirmRpcUrl);
       return sig;
     },
     signMessage: async (message: Uint8Array) => {
@@ -117,31 +178,57 @@ type IrysInstance = {
 };
 
 /** Create an Irys uploader wired to the connected Phantom wallet. */
-export async function createPhantomIrysUploader(
-  rpcUrl: string,
-  devnet: boolean,
-): Promise<IrysInstance> {
+export async function createPhantomIrysUploader(devnet?: boolean): Promise<IrysInstance> {
   const phantom = getPhantomProvider();
   if (!phantom) throw new Error("Phantom wallet is required. Install it from phantom.app.");
+
+  const network = getSolanaNetwork();
+  const isDevnet = devnet ?? isDevnetNetwork(network);
+  // Irys SDK needs a real RPC endpoint (not our browser proxy) for blockhash + fee estimation.
+  const directRpc = getDirectRpcUrl(isDevnet ? "devnet" : "mainnet");
 
   const [{ WebUploader }, { WebSolana }] = await Promise.all([
     import("@irys/web-upload"),
     import("@irys/web-upload-solana"),
   ]);
 
-  const wallet = phantomToIrysWallet(phantom);
-  // Use "confirmed" finality for the SDK's internal confirmationPoll / getTransaction checks.
-  // Our sendTransaction adapter already waits for "finalized" before returning, so by the time
-  // the SDK polls the chain the tx is guaranteed to be at least confirmed — this prevents
-  // the SDK's 30-second poll from timing out before finalization on mainnet.
+  const wallet = phantomToIrysWallet(phantom, directRpc);
   const builder = WebUploader(WebSolana)
     .withProvider(wallet)
-    .withRpc(rpcUrl)
+    .withRpc(directRpc)
     .withTokenOptions({ finality: "confirmed" });
-  return (devnet ? await builder.devnet().build() : await builder.mainnet().build()) as IrysInstance;
+
+  return (isDevnet ? await builder.devnet().build() : await builder.mainnet().build()) as IrysInstance;
 }
 
-async function ensureFunded(irys: IrysInstance, bytes: number) {
+const FUND_TX_RE = /failed to post funding tx - ([1-9A-HJ-NP-Za-km-z]+)/;
+
+async function fundWithRetry(
+  irys: IrysInstance,
+  amount: string,
+  confirmRpcUrl: string,
+  devnet: boolean,
+): Promise<void> {
+  try {
+    await irys.fund(amount);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const match = msg.match(FUND_TX_RE);
+    if (!match) throw e;
+
+    const txId = match[1]!;
+    // SDK gave up too early — wait until chain + bundler both see the tx.
+    await waitForTxConfirmed(txId, confirmRpcUrl);
+    await submitFundTxToBundler(txId, devnet);
+  }
+}
+
+async function ensureFunded(
+  irys: IrysInstance,
+  bytes: number,
+  confirmRpcUrl: string,
+  devnet: boolean,
+) {
   const price = await irys.getPrice(bytes);
   const balance = await irys.getBalance();
   if (!balance.lt(price)) return;
@@ -149,7 +236,7 @@ async function ensureFunded(irys: IrysInstance, bytes: number) {
   const balanceBn = BigInt(balance.toString());
   const deficit = priceBn > balanceBn ? priceBn - balanceBn : 0n;
   const toFund = deficit + deficit / 10n + 1n;
-  await irys.fund(toFund.toString());
+  await fundWithRetry(irys, toFund.toString(), confirmRpcUrl, devnet);
 }
 
 /** Upload bytes permanently to Arweave; Phantom signs fund tx + upload message. */
@@ -157,8 +244,10 @@ export async function uploadWithPhantom(
   irys: IrysInstance,
   data: Uint8Array,
   contentType: string,
+  confirmRpcUrl: string,
+  devnet: boolean,
 ): Promise<string> {
-  await ensureFunded(irys, data.length);
+  await ensureFunded(irys, data.length, confirmRpcUrl, devnet);
   const receipt = await irys.upload(Buffer.from(data), {
     tags: [{ name: "Content-Type", value: contentType }],
   });
@@ -170,16 +259,26 @@ export async function uploadGiftWithPhantom(params: {
   imageBytes: Uint8Array;
   imageContentType: string;
   buildMetadata: (imageUri: string) => string;
-  rpcUrl: string;
-  devnet: boolean;
+  devnet?: boolean;
 }): Promise<{ imageUri: string; metadataUri: string }> {
-  const irys = await createPhantomIrysUploader(params.rpcUrl, params.devnet);
+  const network = getSolanaNetwork();
+  const devnet = params.devnet ?? isDevnetNetwork(network);
+  const confirmRpc = getDirectRpcUrl(devnet ? "devnet" : "mainnet");
+  const irys = await createPhantomIrysUploader(devnet);
 
-  const imageUri = await uploadWithPhantom(irys, params.imageBytes, params.imageContentType);
+  const imageUri = await uploadWithPhantom(
+    irys,
+    params.imageBytes,
+    params.imageContentType,
+    confirmRpc,
+    devnet,
+  );
   const metadataUri = await uploadWithPhantom(
     irys,
     new TextEncoder().encode(params.buildMetadata(imageUri)),
     "application/json",
+    confirmRpc,
+    devnet,
   );
 
   return { imageUri, metadataUri };

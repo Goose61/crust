@@ -63,6 +63,24 @@ export function getRpcUrl(network?: SolanaNetwork, from?: EnvLike): string {
   );
 }
 
+/** Direct cluster RPC URL — never the browser proxy. Used by Irys confirmation polling. */
+export function getDirectRpcUrl(network?: SolanaNetwork, from?: EnvLike): string {
+  const e = from ?? env();
+  const net = network ?? getSolanaNetwork(e);
+  if (net === "devnet") {
+    return (
+      e.NEXT_PUBLIC_SOLANA_RPC_URL_DEVNET ??
+      e.SOLANA_RPC_URL_DEVNET ??
+      SOLANA_RPC_DEVNET
+    );
+  }
+  return (
+    e.NEXT_PUBLIC_SOLANA_RPC_URL_MAINNET ??
+    e.SOLANA_RPC_URL_MAINNET ??
+    SOLANA_RPC_MAINNET
+  );
+}
+
 export function isDevnetNetwork(network?: SolanaNetwork): boolean {
   return (network ?? getSolanaNetwork()) === "devnet";
 }
