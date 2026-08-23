@@ -17,11 +17,11 @@ function env(): EnvLike {
   return typeof process !== "undefined" ? process.env : {};
 }
 
-/** Active cluster — defaults to mainnet when unset. */
+/** Active cluster — defaults to devnet when unset (safer for testing). */
 export function getSolanaNetwork(from?: EnvLike): SolanaNetwork {
   const e = from ?? env();
-  const raw = e.NEXT_PUBLIC_SOLANA_NETWORK ?? e.SOLANA_NETWORK ?? "mainnet";
-  return raw === "devnet" ? "devnet" : "mainnet";
+  const raw = e.NEXT_PUBLIC_SOLANA_NETWORK ?? e.SOLANA_NETWORK ?? "devnet";
+  return raw === "mainnet" ? "mainnet" : "devnet";
 }
 
 /** RPC endpoint for the active cluster (or an explicit override). */

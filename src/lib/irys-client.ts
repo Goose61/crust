@@ -24,6 +24,33 @@ type PhantomLike = {
   ) => Promise<{ signature: Uint8Array }>;
 };
 
+/** Minimal shape of the Solana Connection the Irys SDK passes to sendTransaction. */
+type IrysConnection = {
+  getSignatureStatuses?: (
+    sigs: string[],
+  ) => Promise<{ value: Array<{ confirmationStatus?: string; err?: unknown } | null> }>;
+  [k: string]: unknown;
+};
+
+function sigToBase58(sig: Uint8Array | string): string {
+  if (typeof sig === "string") return sig;
+  const ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const bytes = sig as Uint8Array;
+  const digits: number[] = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i++) {
+      carry += digits[i] << 8;
+      digits[i] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
+  }
+  let r = "";
+  for (let i = 0; i < bytes.length && bytes[i] === 0; i++) r += "1";
+  return r + digits.reverse().map((d) => ALPHA[d]).join("");
+}
+
 /** Minimal adapter expected by @irys/web-upload-solana injected signer. */
 export function phantomToIrysWallet(phantom: PhantomLike) {
   if (!phantom.publicKey) throw new Error("Connect Phantom first.");
@@ -31,30 +58,37 @@ export function phantomToIrysWallet(phantom: PhantomLike) {
     publicKey: phantom.publicKey,
     sendTransaction: async (
       tx: unknown,
-      connection: { confirmTransaction?: unknown },
+      connection: IrysConnection,
       opts?: { skipPreflight?: boolean },
     ) => {
-      void connection;
       const result = await phantom.signAndSendTransaction(tx, {
         skipPreflight: opts?.skipPreflight ?? true,
       });
-      if (typeof result.signature === "string") return result.signature;
-      // Irys expects a base58 tx id string
-      const ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-      const bytes = result.signature;
-      const digits: number[] = [0];
-      for (const byte of bytes) {
-        let carry = byte;
-        for (let i = 0; i < digits.length; i++) {
-          carry += digits[i] << 8;
-          digits[i] = carry % 58;
-          carry = Math.floor(carry / 58);
+      const sig = sigToBase58(result.signature);
+
+      // Irys calls getTransaction(txId, {commitment:"finalized"}) immediately
+      // after sendTransaction returns. If the tx isn't on-chain yet it gets null
+      // and throws "Confirmed tx not found". Poll until at least "confirmed"
+      // before returning so Irys can find the transaction.
+      if (connection.getSignatureStatuses) {
+        for (let attempt = 0; attempt < 45; attempt++) {
+          await new Promise<void>((r) => setTimeout(r, 2000));
+          try {
+            const res = await connection.getSignatureStatuses!([sig]);
+            const status = res?.value?.[0];
+            if (status?.err) {
+              throw new Error(`Fund transaction failed: ${JSON.stringify(status.err)}`);
+            }
+            const cs = status?.confirmationStatus;
+            if (cs === "confirmed" || cs === "finalized") break;
+          } catch (e) {
+            if (e instanceof Error && e.message.startsWith("Fund transaction failed")) throw e;
+            // transient RPC error — keep polling
+          }
         }
-        while (carry > 0) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
       }
-      let r = "";
-      for (let i = 0; i < bytes.length && bytes[i] === 0; i++) r += "1";
-      return r + digits.reverse().map((d) => ALPHA[d]).join("");
+
+      return sig;
     },
     signMessage: async (message: Uint8Array) => {
       const { signature } = await phantom.signMessage(message, "utf8");
