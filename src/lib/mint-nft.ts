@@ -12,6 +12,17 @@
  * If ARWEAVE_SOLANA_KEY is not set the function returns null (demo mode).
  */
 
+import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
+import { mplCore, create } from "@metaplex-foundation/mpl-core";
+import {
+  keypairIdentity,
+  generateSigner,
+  createNoopSigner,
+  publicKey as umiPublicKey,
+} from "@metaplex-foundation/umi";
+import { base64 } from "@metaplex-foundation/umi/serializers";
+import { getRpcUrl } from "./solana-config";
+
 export type BuildTxResult = {
   /** Base64-encoded, partially-signed versioned transaction */
   txBase64: string;
@@ -107,26 +118,7 @@ export async function buildGiftTransaction(params: {
   const rawKey = process.env.ARWEAVE_SOLANA_KEY;
   if (!rawKey) return null; // demo / staging mode
 
-  const { getRpcUrl } = await import("./solana-config");
   const rpcUrl = getRpcUrl();
-
-  // Dynamic imports keep ESM packages out of the client bundle
-  const [umiBundle, mplCoreMod, umiCore, umiSerializers] = await Promise.all([
-    import(/* webpackIgnore: true */ "@metaplex-foundation/umi-bundle-defaults"),
-    import(/* webpackIgnore: true */ "@metaplex-foundation/mpl-core"),
-    import(/* webpackIgnore: true */ "@metaplex-foundation/umi"),
-    import(/* webpackIgnore: true */ "@metaplex-foundation/umi/serializers"),
-  ]);
-
-  const { createUmi } = umiBundle;
-  const { mplCore, create } = mplCoreMod;
-  const {
-    keypairIdentity,
-    generateSigner,
-    createNoopSigner,
-    publicKey: umiPublicKey,
-  } = umiCore;
-  const { base64 } = umiSerializers;
 
   // --- UMI instance ---
   const umi = createUmi(rpcUrl).use(mplCore());
