@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import type { Collection, GeneratedToken } from "@/lib/types";
-import { useWallet, isDevnet, networkName } from "./WalletProvider";
+import { useWallet, networkName } from "./WalletProvider";
+import { explorerClusterQuery } from "@/lib/solana-config";
 import { formatUsd, isTokenSold, nftPrice, tokenImageSrc, tokenName } from "@/lib/collection-ui";
 import { readJsonResponse } from "@/lib/fetch-json";
 
@@ -56,7 +57,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
       }>(res);
       if (!res.ok) throw new Error(data.error ?? "Could not build mint transaction");
 
-      setMessage(`Approve the mint in Phantom (${networkName()})…`);
+      setMessage("Approve the mint in Phantom…");
       const txSignature = await signAndSendTx(data.txBase64!);
 
       const confirm = await fetch("/api/gift/mint", {
@@ -68,7 +69,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
       if (!confirm.ok) throw new Error(confirmed.error ?? "Could not confirm mint");
 
       if (confirmed.collection) setCollection(confirmed.collection);
-      setMessage("Minted on-chain! Check Phantom (devnet) or Solana Explorer.");
+      setMessage("Minted on-chain! Check Phantom or Solana Explorer.");
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Mint failed");
     } finally {
@@ -165,7 +166,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
             <p className="text-sm font-medium text-amber-200">Stored on Arweave — not minted on-chain yet</p>
             <p className="text-xs text-amber-200/70 mt-0.5">
               The image and metadata are permanent, but the Solana NFT was never created.
-              Phantom must be on <strong>{networkName()}</strong> (Settings → Developer Settings → Testnet Mode for devnet).
+              Connect Phantom, then mint to send it to the recipient wallet.
             </p>
           </div>
           <button
@@ -337,13 +338,13 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                         <p className="text-white/40 uppercase tracking-wider text-[10px]">Owner wallet</p>
                         <p className="mt-0.5 font-mono text-white break-all">{selected.owner}</p>
                         <p className="mt-1 text-white/40">
-                          The NFT was sent to this address — check this wallet in Phantom (devnet).
+                          The NFT was sent to this address — check this wallet in Phantom.
                         </p>
                       </div>
                     )}
                     {selected.assetAddress && (
                       <a
-                        href={`https://explorer.solana.com/address/${selected.assetAddress}${isDevnet() ? "?cluster=devnet" : ""}`}
+                        href={`https://explorer.solana.com/address/${selected.assetAddress}${explorerClusterQuery()}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="block text-primary hover:underline"

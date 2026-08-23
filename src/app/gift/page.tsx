@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useWallet, rpcUrl, isDevnet, networkName } from "@/components/WalletProvider";
+import { explorerClusterQuery } from "@/lib/solana-config";
 import { uploadGiftWithPhantom } from "@/lib/irys-client";
 
 type FeeBreakdown = {
@@ -212,7 +213,7 @@ export default function GiftPage() {
   }
 
   if (result) {
-    const cluster = isDevnet() ? "?cluster=devnet" : "";
+    const cluster = explorerClusterQuery();
     return (
       <main className="container mx-auto max-w-2xl px-4 py-16 text-center">
         <div className="text-6xl mb-4">{result.onChain ? "🎁" : "📋"}</div>
@@ -224,7 +225,7 @@ export default function GiftPage() {
             The NFT was minted to{" "}
             <span className="font-mono text-white/70">{recipient.trim()}</span>.
             {publicKey && recipient.trim() !== publicKey && (
-              <> It will not appear in your wallet — the recipient must check theirs on devnet.</>
+              <> It will not appear in your wallet — the recipient must check theirs in Phantom.</>
             )}
           </p>
         )}
