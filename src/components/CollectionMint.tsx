@@ -6,7 +6,7 @@ import { useWallet, isDevnet } from "./WalletProvider";
 import { formatUsd, isTokenSold, nftPrice, tokenImageSrc, tokenName } from "@/lib/collection-ui";
 
 export function CollectionMint({ initial }: { initial: Collection }) {
-  const { publicKey, connect } = useWallet();
+  const { publicKey, connect, signAndSendTx } = useWallet();
   const [collection, setCollection] = useState(initial);
   const [selected, setSelected] = useState<GeneratedToken | null>(null);
   const [recipient, setRecipient] = useState("");
@@ -22,6 +22,54 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   const remaining = Math.max(0, collection.supply - soldCount);
   const fees = collection.fees;
   const socials = collection.socials ?? {};
+
+  const [mintBusy, setMintBusy] = useState(false);
+
+  const isUnmintedGift =
+    collection.payments.giftMintEnabled &&
+    collection.supply === 1 &&
+    !collection.tokens.some((t) => t.assetAddress);
+
+  async function completeOnChainMint() {
+    if (!publicKey) {
+      await connect();
+      return;
+    }
+    setMintBusy(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/gift/mint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collectionId: collection.id, payer: publicKey }),
+      });
+      const data = await res.json() as {
+        txBase64?: string;
+        assetAddress?: string;
+        collection?: Collection;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Could not build mint transaction");
+
+      setMessage("Approve the mint in Phantom…");
+      const txSignature = await signAndSendTx(data.txBase64!);
+
+      const confirm = await fetch("/api/gift/mint", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collectionId: collection.id, txSignature }),
+      });
+      const confirmed = await confirm.json() as { collection?: Collection; error?: string };
+      if (!confirm.ok) throw new Error(confirmed.error ?? "Could not confirm mint");
+
+      if (confirmed.collection) setCollection(confirmed.collection);
+      setMessage("Minted on-chain! Check Phantom (devnet) or Solana Explorer.");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Mint failed");
+    } finally {
+      setMintBusy(false);
+    }
+  }
 
   async function startCheckout(token: GeneratedToken) {
     if (!publicKey) {
@@ -105,6 +153,30 @@ export function CollectionMint({ initial }: { initial: Collection }) {
           <h1 className="text-3xl font-bold text-white">{collection.name}</h1>
         </div>
       </div>
+
+      {isUnmintedGift && (
+        <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-amber-200">Stored on Arweave — not minted on-chain yet</p>
+            <p className="text-xs text-amber-200/70 mt-0.5">
+              The image and metadata are permanent, but the Solana NFT was never created.
+              Connect Phantom and mint to send it to the recipient wallet.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void completeOnChainMint()}
+            disabled={mintBusy}
+            className="shrink-0 rounded-full bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary/80 disabled:opacity-50"
+          >
+            {mintBusy ? "Minting…" : publicKey ? "Mint on-chain now" : "Connect & mint"}
+          </button>
+        </div>
+      )}
+
+      {message && (
+        <p className="mb-4 text-sm text-white/60">{message}</p>
+      )}
 
       <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
         <div>

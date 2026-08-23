@@ -139,6 +139,12 @@ export async function POST(req: NextRequest) {
     txBase64,
     assetAddress,
     requiresWalletSignature: !!txBase64,
+    ...(txBase64
+      ? {}
+      : {
+          warning:
+            "Image saved to Arweave, but on-chain mint was skipped — set ARWEAVE_SOLANA_KEY on the server, then use “Mint on-chain now” on the collection page.",
+        }),
   });
 }
 

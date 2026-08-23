@@ -16,6 +16,9 @@ export function nftPrice(collection: Collection, token: GeneratedToken): number 
 export function tokenImageSrc(collectionId: string, token: GeneratedToken) {
   // Gift NFTs (and other Irys uploads) store the image on Arweave — no local file.
   if (token.imageUri && !token.imageUri.startsWith("/api/")) {
+    // Proxy Irys gateway URLs same-origin (gateway redirects to CDN domains blocked by CSP).
+    const m = token.imageUri.match(/gateway\.irys\.xyz\/([A-Za-z0-9_-]+)/);
+    if (m) return `/api/irys-gateway/${m[1]}`;
     return token.imageUri;
   }
   return `/api/assets/${collectionId}/${token.imageRelPath}`;

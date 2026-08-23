@@ -36,7 +36,7 @@ export function middleware(req: NextRequest) {
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "img-src 'self' data: blob: https://gateway.irys.xyz https://arweave.net https://blob.vercel-storage.com",
+      "img-src 'self' data: blob: https://gateway.irys.xyz https://arweave.net https://blob.vercel-storage.com https://*.datasprite-cdn.com",
       // Irys upload nodes + Solana RPCs + Jupiter price + blob storage
       [
         "connect-src 'self'",
