@@ -218,6 +218,15 @@ export default function GiftPage() {
         <h1 className="text-3xl font-semibold text-white mb-2">
           {result.onChain ? "Gift sent on-chain" : "Gift recorded"}
         </h1>
+        {result.onChain && recipient.trim() && (
+          <p className="mt-2 text-sm text-white/50">
+            The NFT was minted to{" "}
+            <span className="font-mono text-white/70">{recipient.trim()}</span>.
+            {publicKey && recipient.trim() !== publicKey && (
+              <> It will not appear in your wallet — the recipient must check theirs on devnet.</>
+            )}
+          </p>
+        )}
         <div className="space-y-3 mb-8 text-left mt-8">
           {result.assetAddress && (
             <div className="rounded border border-white/10 bg-white/5 px-4 py-3">

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Collection, GeneratedToken } from "@/lib/types";
-import { useWallet } from "./WalletProvider";
+import { useWallet, isDevnet } from "./WalletProvider";
 import { formatUsd, isTokenSold, nftPrice, tokenImageSrc, tokenName } from "@/lib/collection-ui";
 
 export function CollectionMint({ initial }: { initial: Collection }) {
@@ -252,6 +252,40 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                       );
                     })}
                 </dl>
+
+                {isTokenSold(selected, collection) && (
+                  <div className="mt-4 space-y-2 rounded border border-white/10 bg-white/5 px-3 py-3 text-xs">
+                    {selected.owner && (
+                      <div>
+                        <p className="text-white/40 uppercase tracking-wider text-[10px]">Owner wallet</p>
+                        <p className="mt-0.5 font-mono text-white break-all">{selected.owner}</p>
+                        <p className="mt-1 text-white/40">
+                          The NFT was sent to this address — check this wallet in Phantom (devnet).
+                        </p>
+                      </div>
+                    )}
+                    {selected.assetAddress && (
+                      <a
+                        href={`https://explorer.solana.com/address/${selected.assetAddress}${isDevnet() ? "?cluster=devnet" : ""}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-primary hover:underline"
+                      >
+                        View asset on Solana Explorer ↗
+                      </a>
+                    )}
+                    {selected.mintTxUrl && (
+                      <a
+                        href={selected.mintTxUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-primary hover:underline"
+                      >
+                        View mint transaction ↗
+                      </a>
+                    )}
+                  </div>
+                )}
 
                 {!isTokenSold(selected, collection) && collection.status === "live" && (
                   <div className="mt-5 space-y-3">
