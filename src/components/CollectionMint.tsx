@@ -29,7 +29,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   const isUnmintedGift =
     collection.payments.giftMintEnabled &&
     collection.supply === 1 &&
-    !collection.tokens.some((t) => t.assetAddress);
+    !collection.tokens.some((t) => t.mintTxUrl);
 
   async function completeOnChainMint() {
     if (!publicKey) {

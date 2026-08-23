@@ -7,10 +7,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCollection, updateCollection, saveCollection } from "@/lib/store";
 import { buildGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
-import { explorerClusterQuery, parseNetwork } from "@/lib/solana-config";
+import { explorerClusterQuery, parseNetwork, type SolanaNetwork } from "@/lib/solana-config";
+import {
+  resetStaleMintState,
+  txSignatureFromMintUrl,
+  verifyMintTransaction,
+} from "@/lib/verify-mint";
+import type { Collection } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
+
+async function ensureMintAllowed(
+  collection: Collection,
+  collectionId: string,
+  network: SolanaNetwork,
+): Promise<Collection> {
+  const token = collection.tokens[0];
+  const sig = txSignatureFromMintUrl(token?.mintTxUrl);
+  if (sig) {
+    const verified = await verifyMintTransaction(sig, network);
+    if (verified.ok) {
+      throw new Error("Already minted on-chain");
+    }
+    await resetStaleMintState(collectionId);
+    const fresh = await getCollection(collectionId);
+    if (!fresh) throw new Error("Collection not found");
+    return fresh;
+  }
+  return collection;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,15 +50,21 @@ export async function POST(req: NextRequest) {
     if (!payer || !isValidSolanaAddress(payer))
       return NextResponse.json({ error: "Connect your wallet first" }, { status: 400 });
 
-    const collection = await getCollection(collectionId);
+    let collection = await getCollection(collectionId);
     if (!collection)
       return NextResponse.json({ error: "Collection not found" }, { status: 404 });
+
+    try {
+      collection = await ensureMintAllowed(collection, collectionId, network);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Mint not allowed";
+      const status = msg.includes("Already minted") ? 400 : 500;
+      return NextResponse.json({ error: msg }, { status });
+    }
 
     const token = collection.tokens[0];
     if (!token)
       return NextResponse.json({ error: "No token in collection" }, { status: 400 });
-    if (token.assetAddress)
-      return NextResponse.json({ error: "Already minted on-chain" }, { status: 400 });
     if (!token.metadataUri?.startsWith("http"))
       return NextResponse.json({ error: "Metadata URI missing" }, { status: 400 });
 
@@ -93,6 +125,11 @@ export async function PATCH(req: NextRequest) {
     const collection = await getCollection(collectionId);
     if (!collection)
       return NextResponse.json({ error: "Collection not found" }, { status: 404 });
+
+    const verified = await verifyMintTransaction(txSignature, network);
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.reason }, { status: 400 });
+    }
 
     collection.status = "sold_out";
     collection.mintedCount = 1;

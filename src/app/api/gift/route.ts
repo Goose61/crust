@@ -12,6 +12,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { defaultPayments, type Collection, type GeneratedToken } from "@/lib/types";
 import { buildGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
 import { explorerClusterQuery, parseNetwork } from "@/lib/solana-config";
+import { verifyMintTransaction } from "@/lib/verify-mint";
 
 export const runtime = "nodejs";
 
@@ -163,6 +164,11 @@ export async function PATCH(req: NextRequest) {
   const collection = await getCollection(collectionId);
   if (!collection)
     return NextResponse.json({ error: "Collection not found" }, { status: 404 });
+
+  const verified = await verifyMintTransaction(txSignature, network);
+  if (!verified.ok) {
+    return NextResponse.json({ error: verified.reason }, { status: 400 });
+  }
 
   collection.status = "sold_out";
   collection.mintedCount = 1;
