@@ -13,17 +13,7 @@ const nextConfig: NextConfig = {
     // Re-enable ESLint during builds so CI catches real issues
     ignoreDuringBuilds: false,
   },
-  serverExternalPackages: [
-    "sharp",
-    "@irys/upload",
-    "@irys/upload-solana",
-    "@metaplex-foundation/mpl-core",
-    "@metaplex-foundation/umi",
-    "@metaplex-foundation/umi-bundle-defaults",
-    "@metaplex-foundation/umi-rpc-web3js",
-    "@metaplex-foundation/umi-serializers",
-    "@solana/web3.js",
-  ],
+  serverExternalPackages: ["sharp", "@irys/upload", "@irys/upload-solana"],
 
   // Serve the static thecrust landing page at the root and legal URLs.
   // beforeFiles rewrites run BEFORE Next.js matches any pages or static files,

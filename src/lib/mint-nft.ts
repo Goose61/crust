@@ -12,16 +12,16 @@
  * If ARWEAVE_SOLANA_KEY is not set the function returns null (demo mode).
  */
 
-import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
-import { mplCore, create } from "@metaplex-foundation/mpl-core";
 import {
   keypairIdentity,
   generateSigner,
   createNoopSigner,
   publicKey as umiPublicKey,
 } from "@metaplex-foundation/umi";
+import { create } from "@metaplex-foundation/mpl-core";
 import { base64 } from "@metaplex-foundation/umi/serializers";
 import { getRpcUrl } from "./solana-config";
+import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
 
 export type BuildTxResult = {
   /** Base64-encoded, partially-signed versioned transaction */
@@ -103,11 +103,6 @@ function decodeBase58(b58: string): Uint8Array {
  *      does NOT sign on their behalf.
  *   4. Serialised base64 tx is returned; the browser wallet signs as
  *      fee payer and submits.
- *
- * @param params.name         NFT name (shown in wallets / explorers)
- * @param params.metadataUri  Permanent Arweave or Blob URI of metadata JSON
- * @param params.recipient    Wallet that receives the NFT
- * @param params.payer        Wallet that will pay Solana fees (the minter)
  */
 export async function buildGiftTransaction(params: {
   name: string;
@@ -119,39 +114,27 @@ export async function buildGiftTransaction(params: {
   if (!rawKey) return null; // demo / staging mode
 
   const rpcUrl = getRpcUrl();
+  const umi = createMintUmi();
 
-  // --- UMI instance ---
-  const umi = createUmi(rpcUrl).use(mplCore());
-
-  // Platform keypair is the update authority (never leaves the server)
   const secretBytes = parseSecretKey(rawKey);
   const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(secretBytes);
   umi.use(keypairIdentity(authorityKeypair));
 
-  // Asset keypair — signs the create instruction server-side
   const assetSigner = generateSigner(umi);
-
-  // Fee payer = minter's browser wallet (NoopSigner — signs nothing here)
-  // Per Metaplex docs: NoopSigner lets UMI build the tx without the payer
-  // signing; the payer completes the signature in the browser.
   const payerNoop = createNoopSigner(umiPublicKey(params.payer));
+  const blockhash = await fetchLatestBlockhash(rpcUrl);
 
-  // Build and partially sign:
-  //   • authorityKeypair signs as identity (update authority)
-  //   • assetSigner signs its own account creation
-  //   • payerNoop is a placeholder — browser wallet adds the final signature
   const tx = await create(umi, {
     asset: assetSigner,
     name: params.name,
     uri: params.metadataUri,
     owner: umiPublicKey(params.recipient),
-    payer: payerNoop, // minter pays chain fees
+    payer: payerNoop,
   })
-    .useV0() // versioned tx — required for Phantom signAndSendTransaction
-    .setBlockhash(await umi.rpc.getLatestBlockhash())
+    .useV0()
+    .setBlockhash(blockhash)
     .buildAndSign(umi);
 
-  // Serialize → base64 string for the frontend
   const serialized = umi.transactions.serialize(tx);
   const txBase64 = base64.deserialize(serialized)[0];
 
