@@ -121,7 +121,8 @@ export async function buildGiftTransaction(params: {
 
   const secretBytes = parseSecretKey(rawKey);
   const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(secretBytes);
-  umi.use(keypairIdentity(authorityKeypair));
+  // Identity = platform update authority; do NOT set umi.payer to platform key.
+  umi.use(keypairIdentity(authorityKeypair, false));
 
   const assetSigner = generateSigner(umi);
   const payerNoop = createNoopSigner(umiPublicKey(params.payer));
@@ -132,9 +133,10 @@ export async function buildGiftTransaction(params: {
     name: params.name,
     uri: params.metadataUri,
     owner: umiPublicKey(params.recipient),
-    payer: payerNoop,
+    payer: payerNoop, // pays rent for new asset account
   })
     .useV0()
+    .setFeePayer(payerNoop) // user's wallet pays tx fees (was wrongly platform key)
     .setBlockhash(blockhash)
     .buildAndSign(umi);
 
