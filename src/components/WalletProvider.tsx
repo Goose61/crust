@@ -11,7 +11,12 @@ type WalletCtx = {
   isPhantom: boolean;
   connect: () => Promise<void>;
   disconnect: () => void;
-  /** Sign a partially-signed Metaplex Core tx in Phantom and broadcast. */
+  /**
+   * Phantom-first multi-signer mint: prepare (fresh blockhash + simulate) →
+   * signTransaction → server co-sign → submit.
+   */
+  signMintTx: (collectionId: string, network?: string) => Promise<string>;
+  /** @deprecated Use signMintTx for gift mints (Phantom-first signing order). */
   signAndSendTx: (txBase64: string) => Promise<string>;
 };
 
@@ -21,6 +26,7 @@ const Ctx = createContext<WalletCtx>({
   isPhantom: false,
   connect: async () => {},
   disconnect: () => {},
+  signMintTx: async () => { throw new Error("Wallet not connected"); },
   signAndSendTx: async () => { throw new Error("Wallet not connected"); },
 });
 
@@ -31,6 +37,7 @@ type Phantom = {
   publicKey?: { toBase58: () => string };
   connect: () => Promise<{ publicKey: { toBase58: () => string } }>;
   disconnect: () => Promise<void>;
+  signTransaction: (tx: unknown) => Promise<unknown>;
   signAndSendTransaction: (
     tx: unknown,
     options?: { skipPreflight?: boolean },
@@ -106,6 +113,46 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setPublicKey(null);
   }, []);
 
+  const signMintTx = useCallback(
+    async (collectionId: string, network?: string): Promise<string> => {
+      const p = getProvider();
+      if (!p) throw new Error("Connect Phantom to continue.");
+      if (!publicKey) throw new Error("Wallet not connected.");
+      if (!p.signTransaction) {
+        throw new Error("Phantom signTransaction is required for minting.");
+      }
+
+      // Fresh blockhash + pre-sign simulation before Phantom popup.
+      const prep = await fetch("/api/gift/prepare-sign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collectionId, payer: publicKey, network }),
+      });
+      const prepData = (await prep.json()) as { txBase64?: string; error?: string };
+      if (!prep.ok || !prepData.txBase64) {
+        throw new Error(prepData.error ?? "Failed to prepare transaction for signing");
+      }
+
+      const { VersionedTransaction } = await import("@solana/web3.js");
+      const tx = VersionedTransaction.deserialize(Buffer.from(prepData.txBase64, "base64"));
+
+      // Phantom Lighthouse: wallet must sign first, then server co-signs.
+      const signed = (await p.signTransaction(tx)) as InstanceType<typeof VersionedTransaction>;
+      const signedB64 = Buffer.from(signed.serialize()).toString("base64");
+
+      const res = await fetch("/api/gift/cosign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collectionId, signedTxBase64: signedB64, network }),
+      });
+      const data = (await res.json()) as { txSignature?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Co-sign failed");
+      if (!data.txSignature) throw new Error("No transaction signature returned");
+      return data.txSignature;
+    },
+    [publicKey],
+  );
+
   const signAndSendTx = useCallback(async (txBase64: string): Promise<string> => {
     const p = getProvider();
     if (!p) throw new Error("Connect Phantom to continue.");
@@ -131,9 +178,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       isPhantom: !!getProvider(),
       connect,
       disconnect,
+      signMintTx,
       signAndSendTx,
     }),
-    [publicKey, connecting, connect, disconnect, signAndSendTx],
+    [publicKey, connecting, connect, disconnect, signMintTx, signAndSendTx],
   );
 
   return (

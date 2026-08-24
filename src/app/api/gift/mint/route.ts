@@ -95,6 +95,7 @@ export async function POST(req: NextRequest) {
       if (c.tokens[0]) c.tokens[0].assetAddress = txResult.assetAddress;
       c.status = "draft";
       c.mintedCount = 0;
+      c.pendingMint = txResult.pendingMint;
       return c;
     });
 
@@ -133,6 +134,7 @@ export async function PATCH(req: NextRequest) {
 
     collection.status = "sold_out";
     collection.mintedCount = 1;
+    delete collection.pendingMint;
     if (collection.tokens[0]) {
       collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery(network)}`;
     }

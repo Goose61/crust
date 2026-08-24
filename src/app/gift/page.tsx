@@ -39,7 +39,7 @@ async function detectImageAsync(file: File): Promise<{ ext: string; contentType:
 }
 
 export default function GiftPage() {
-  const { publicKey, connecting, connect, signAndSendTx } = useWallet();
+  const { publicKey, connecting, connect, signMintTx } = useWallet();
 
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -191,7 +191,7 @@ export default function GiftPage() {
 
       // ── Step 3: mint NFT (Phantom tx #2) ──────────────────────────────
       setStage("minting");
-      const txSignature = await signAndSendTx(data.txBase64);
+      const txSignature = await signMintTx(data.collectionId!, network);
 
       setStage("confirming");
       await fetch("/api/gift", {

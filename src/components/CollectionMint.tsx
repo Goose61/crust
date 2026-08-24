@@ -8,7 +8,7 @@ import { formatUsd, isTokenSold, nftPrice, tokenImageSrc, tokenName } from "@/li
 import { readJsonResponse } from "@/lib/fetch-json";
 
 export function CollectionMint({ initial }: { initial: Collection }) {
-  const { publicKey, connect, signAndSendTx } = useWallet();
+  const { publicKey, connect, signMintTx } = useWallet();
   const [collection, setCollection] = useState(initial);
   const [selected, setSelected] = useState<GeneratedToken | null>(null);
   const [recipient, setRecipient] = useState("");
@@ -58,7 +58,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
       if (!res.ok) throw new Error(data.error ?? "Could not build mint transaction");
 
       setMessage("Approve the mint in Phantom…");
-      const txSignature = await signAndSendTx(data.txBase64!);
+      const txSignature = await signMintTx(collection.id, networkName());
 
       const confirm = await fetch("/api/gift/mint", {
         method: "PATCH",

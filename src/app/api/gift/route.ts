@@ -75,6 +75,8 @@ export async function POST(req: NextRequest) {
     assetAddress = txResult.assetAddress;
   }
 
+  const pendingMint = txResult?.pendingMint;
+
   const token: GeneratedToken = {
     tokenId: 1,
     dna: "gift",
@@ -131,6 +133,7 @@ export async function POST(req: NextRequest) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     tokens: [token],
+    ...(pendingMint ? { pendingMint } : {}),
   };
 
   await saveCollection(collection);
@@ -172,6 +175,7 @@ export async function PATCH(req: NextRequest) {
 
   collection.status = "sold_out";
   collection.mintedCount = 1;
+  delete collection.pendingMint;
   if (collection.tokens[0]) {
     collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery(network)}`;
   }

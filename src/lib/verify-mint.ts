@@ -72,6 +72,7 @@ export async function resetStaleMintState(collectionId: string) {
   await updateCollection(collectionId, (c) => {
     c.status = "draft";
     c.mintedCount = 0;
+    delete c.pendingMint;
     if (c.tokens[0]) {
       delete c.tokens[0].mintTxUrl;
       delete c.tokens[0].assetAddress;

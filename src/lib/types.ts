@@ -125,6 +125,17 @@ export type GeneratedToken = {
   mintTxUrl?: string;
 };
 
+/** Server-only co-sign data for in-progress gift mints (cleared after confirm). */
+export type PendingMint = {
+  assetSecretKeyB64: string;
+  assetAddress: string;
+  /** Snapshot of mint params so the tx can be rebuilt with a fresh blockhash. */
+  name: string;
+  metadataUri: string;
+  recipient: string;
+  payer: string;
+};
+
 export type CollectionSocials = {
   twitter?: string;
   discord?: string;
@@ -183,6 +194,8 @@ export type Collection = {
   royaltySplit?: RoyaltySplit;
   socials?: CollectionSocials;
   traitPricing?: TraitPricing;
+  /** Ephemeral asset keypair for Phantom-first multi-signer mint flow */
+  pendingMint?: PendingMint;
   createdAt: string;
   updatedAt: string;
   tokens: GeneratedToken[];
