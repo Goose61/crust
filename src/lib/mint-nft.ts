@@ -1,12 +1,18 @@
 /**
  * Server-side Metaplex Core NFT transaction builder.
  *
- * Phantom Lighthouse requires the wallet to sign FIRST, then additional
- * signers partialSign afterward. Flow:
- *   1. Server builds an UNSIGNED tx and stores the asset keypair in pendingMint.
- *   2. Immediately before Phantom: refresh blockhash + simulate (sigVerify: false).
- *   3. User signs in Phantom via signTransaction (fee payer).
- *   4. Server co-signs with platform + asset keypairs and submits.
+ * Verified gift mints (when CORE_COLLECTION_ADDRESS is set) mint into an on-chain
+ * Metaplex Core Collection so wallets group them under one brand:
+ * @see https://www.metaplex.com/docs/smart-contracts/core/collections
+ * @see https://www.metaplex.com/docs/smart-contracts/core/create-asset
+ * @see https://docs.phantom.com/best-practices/tokens/collectibles-nfts-and-semi-fungibles
+ *
+ * Phantom Lighthouse multi-signer order:
+ * @see https://docs.phantom.com/developer-powertools/domain-and-transaction-warnings
+ *   1. Server builds UNSIGNED tx, stores asset keypair in pendingMint.
+ *   2. prepare-sign: fresh blockhash + simulate (sigVerify: false).
+ *   3. User signs via phantom.signTransaction (fee payer).
+ *   4. Server co-signs (asset + collection authority when applicable) and submits.
  *
  * If ARWEAVE_SOLANA_KEY is not set the builder returns null (demo mode).
  */
@@ -23,6 +29,7 @@ import { base64 } from "@metaplex-foundation/umi/serializers";
 import { Keypair, VersionedTransaction } from "@solana/web3.js";
 import { getRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
 import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
+import { fetchCoreCollection, getCoreCollectionAddress } from "./core-collection";
 import type { PendingMint } from "./types";
 
 export type BuildTxResult = {
@@ -30,6 +37,8 @@ export type BuildTxResult = {
   txBase64: string;
   assetAddress: string;
   pendingMint: PendingMint;
+  /** On-chain Core Collection when verified collection minting is enabled */
+  coreCollectionAddress?: string;
 };
 
 export type PrepareSignResult = {
@@ -125,7 +134,8 @@ async function buildUnsignedGiftTx(params: {
   payer: string;
   network: SolanaNetwork;
   assetSecretKey?: Uint8Array;
-}): Promise<{ txBase64: string; assetAddress: string; assetSecretKey: Uint8Array }> {
+  coreCollectionAddress?: string | null;
+}): Promise<{ txBase64: string; assetAddress: string; assetSecretKey: Uint8Array; coreCollectionAddress?: string }> {
   const platformSecret = getPlatformSecretKey();
   if (!platformSecret) throw new Error("Server mint key not configured.");
 
@@ -133,6 +143,7 @@ async function buildUnsignedGiftTx(params: {
   const umi = createMintUmi();
 
   const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(platformSecret);
+  const authoritySigner = createSignerFromKeypair(umi, authorityKeypair);
   umi.use(keypairIdentity(authorityKeypair, false));
 
   const assetSigner = params.assetSecretKey
@@ -145,13 +156,28 @@ async function buildUnsignedGiftTx(params: {
   const payerNoop = createNoopSigner(umiPublicKey(params.payer));
   const blockhash = await fetchLatestBlockhash(rpcUrl);
 
-  const tx = await create(umi, {
+  const collectionAddress =
+    params.coreCollectionAddress ?? getCoreCollectionAddress(params.network);
+
+  let coreCollectionAddress: string | undefined;
+  const createArgs: Parameters<typeof create>[1] = {
     asset: assetSigner,
     name: params.name,
     uri: params.metadataUri,
     owner: umiPublicKey(params.recipient),
     payer: payerNoop,
-  })
+  };
+
+  if (collectionAddress) {
+    // Mint into Core Collection — collection update authority must sign.
+    // @see https://www.metaplex.com/docs/smart-contracts/core/create-asset
+    const collection = await fetchCoreCollection(umi, collectionAddress, params.network);
+    createArgs.collection = collection;
+    createArgs.authority = authoritySigner;
+    coreCollectionAddress = collectionAddress;
+  }
+
+  const tx = await create(umi, createArgs)
     .useV0()
     .setFeePayer(payerNoop)
     .setBlockhash(blockhash)
@@ -161,12 +187,12 @@ async function buildUnsignedGiftTx(params: {
   const txBase64 = base64.deserialize(serialized)[0];
   const assetAddress = assetSigner.publicKey.toString();
 
-  return { txBase64, assetAddress, assetSecretKey: assetSigner.secretKey };
+  return { txBase64, assetAddress, assetSecretKey: assetSigner.secretKey, coreCollectionAddress };
 }
 
 /**
  * Simulate an unsigned tx before Phantom signing (Phantom docs: sigVerify false).
- * Catches program errors early and reduces simulation warnings in the wallet.
+ * @see https://docs.phantom.com/solana/sending-a-transaction
  */
 export async function simulateUnsignedTransaction(
   txBase64: string,
@@ -221,6 +247,7 @@ export async function prepareGiftTransactionForSigning(params: {
     payer: params.pendingMint.payer,
     network,
     assetSecretKey: assetSecret,
+    coreCollectionAddress: params.pendingMint.coreCollectionAddress,
   });
 
   if (assetAddress !== params.pendingMint.assetAddress) {
@@ -234,7 +261,7 @@ export async function prepareGiftTransactionForSigning(params: {
 
 /**
  * Build an UNSIGNED Metaplex Core create transaction.
- * Phantom signs first; platform + asset keys co-sign afterward.
+ * Phantom signs first; server co-signs afterward.
  */
 export async function buildGiftTransaction(params: {
   name: string;
@@ -246,17 +273,19 @@ export async function buildGiftTransaction(params: {
   if (!getPlatformSecretKey()) return null;
 
   const network = params.network ?? getSolanaNetwork();
-  const { txBase64, assetAddress, assetSecretKey } = await buildUnsignedGiftTx({
-    name: params.name,
-    metadataUri: params.metadataUri,
-    recipient: params.recipient,
-    payer: params.payer,
-    network,
-  });
+  const { txBase64, assetAddress, assetSecretKey, coreCollectionAddress } =
+    await buildUnsignedGiftTx({
+      name: params.name,
+      metadataUri: params.metadataUri,
+      recipient: params.recipient,
+      payer: params.payer,
+      network,
+    });
 
   return {
     txBase64,
     assetAddress,
+    coreCollectionAddress,
     pendingMint: {
       assetSecretKeyB64: secretKeyToB64(assetSecretKey),
       assetAddress,
@@ -264,13 +293,14 @@ export async function buildGiftTransaction(params: {
       metadataUri: params.metadataUri,
       recipient: params.recipient,
       payer: params.payer,
+      ...(coreCollectionAddress ? { coreCollectionAddress } : {}),
     },
   };
 }
 
 /**
- * Co-sign a Phantom-signed mint tx with platform + asset keys, then submit.
- * Called after the user signs first via phantom.signTransaction().
+ * Co-sign a Phantom-signed mint tx, then submit.
+ * Collection mints require asset + collection authority signatures.
  */
 export async function cosignAndSubmitGiftTransaction(params: {
   userSignedTxBase64: string;
@@ -291,14 +321,21 @@ export async function cosignAndSubmitGiftTransaction(params: {
 
   const assetSecret = secretKeyFromB64(params.pendingMint.assetSecretKeyB64);
   const assetKp = Keypair.fromSecretKey(assetSecret);
+  const platformKp = Keypair.fromSecretKey(platformSecret);
 
   if (assetKp.publicKey.toBase58() !== params.pendingMint.assetAddress) {
     throw new Error("Pending mint asset key does not match stored address.");
   }
 
-  // Phantom signed as fee payer first; only the asset keypair co-signs afterward.
-  // Platform key (update authority) is not a required signer on Core createV2.
-  tx.sign([assetKp]);
+  // Phantom signed as fee payer first.
+  const cosigners = [assetKp];
+  const usesCoreCollection =
+    params.pendingMint.coreCollectionAddress ?? getCoreCollectionAddress(network);
+  if (usesCoreCollection) {
+    // Collection membership requires update-authority signature at create time.
+    cosigners.unshift(platformKp);
+  }
+  tx.sign(cosigners);
 
   const res = await fetch(rpcUrl, {
     method: "POST",

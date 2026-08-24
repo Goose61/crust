@@ -147,6 +147,9 @@ export async function POST(req: NextRequest) {
     assetAddress,
     network,
     requiresWalletSignature: !!txBase64,
+    ...(txResult?.coreCollectionAddress
+      ? { coreCollectionAddress: txResult.coreCollectionAddress, verifiedCollection: true }
+      : {}),
     ...(txBase64
       ? {}
       : {
