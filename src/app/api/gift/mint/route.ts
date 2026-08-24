@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCollection, updateCollection, saveCollection } from "@/lib/store";
 import { buildGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
+import { GIFT_MINT_NAME } from "@/lib/gift-metadata";
 import { explorerClusterQuery, parseNetwork, type SolanaNetwork } from "@/lib/solana-config";
 import {
   resetStaleMintState,
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest) {
     if (!recipient || !isValidSolanaAddress(recipient))
       return NextResponse.json({ error: "Recipient address missing" }, { status: 400 });
 
-    const nftName = `${collection.name} #${token.tokenId}`;
+    const nftName = GIFT_MINT_NAME;
     const txResult = await buildGiftTransaction({
       name: nftName,
       metadataUri: token.metadataUri,

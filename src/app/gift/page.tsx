@@ -56,10 +56,8 @@ export default function GiftPage() {
   const [file, setFile] = useState<File | null>(null);
   const [imagePayload, setImagePayload] = useState<ImagePayload | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [name, setName] = useState("Gift NFT");
   const [recipient, setRecipient] = useState("");
   const [mintToSelf, setMintToSelf] = useState(false);
-  const [note, setNote] = useState("");
 
   const [fees, setFees] = useState<FeeBreakdown | null>(null);
   const [feesLoading, setFeesLoading] = useState(false);
@@ -175,7 +173,6 @@ export default function GiftPage() {
       };
 
       const imageBytes = imagePayload.bytes;
-      const nftName = `${name.trim() || "Gift NFT"} #1`;
 
       // ── Step 1: Arweave storage via Phantom (fund tx + upload signatures) ──
       setStage("storage");
@@ -187,11 +184,8 @@ export default function GiftPage() {
         onStage: (s) => setStage(s === "funding" ? "storage" : "uploading"),
         buildMetadata: (uri) =>
           buildGiftMetadataJson({
-            name: nftName,
-            description: note || "A 1/1 gift NFT.",
             imageUri: uri,
             imageContentType: imageInfo.contentType,
-            note: note || undefined,
             creatorAddress: publicKey,
             coreCollectionAddress: giftConfig?.coreCollectionAddress,
             coreCollectionName: giftConfig?.coreCollectionName,
@@ -208,10 +202,8 @@ export default function GiftPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: name.trim() || "Gift NFT",
           recipient: recipient.trim(),
           payer: publicKey,
-          note,
           imageUri,
           metadataUri,
           contentType: imageInfo.contentType,
@@ -335,7 +327,7 @@ export default function GiftPage() {
             if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
             previewUrlRef.current = null;
             setResult(null); setFile(null); setImagePayload(null); setPreview(null);
-            setName("Gift NFT"); setRecipient(""); setMintToSelf(false); setNote("");
+            setRecipient(""); setMintToSelf(false);
             setFees(null); setError(null); setStage("idle");
           }}
           className="text-sm text-white/40 hover:text-white/70"
@@ -349,10 +341,10 @@ export default function GiftPage() {
   return (
     <main className="container mx-auto max-w-3xl px-4 py-12">
       <p className="font-[family-name:var(--font-mono)] text-[11px] tracking-[0.22em] text-white/50">1 / 1</p>
-      <h1 className="mt-2 text-5xl md:text-7xl">Gift an NFT</h1>
+      <h1 className="mt-2 text-5xl md:text-7xl">Gift a $PIZZA NFT</h1>
       <p className="mt-4 max-w-xl text-sm leading-6 text-white/50">
-        Connect with Phantom to send a 1/1 NFT. You pay all fees from your wallet.
-        The recipient receives the NFT for free. Your private key never leaves Phantom.
+        Drop a PNG or JPEG, pick a recipient, and send a 1/1 $PIZZA gift NFT.
+        You pay all fees from your wallet — the recipient gets it for free.
       </p>
 
       {!publicKey && (
@@ -425,11 +417,6 @@ export default function GiftPage() {
         </label>
 
         <div className="space-y-4">
-          <label className="block text-sm">
-            <span className="mb-1 block text-white/50">Name</span>
-            <input className="input" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} />
-          </label>
-
           <div className="block text-sm">
             <span className="mb-1 block text-white/50">Recipient wallet</span>
             <input
@@ -461,11 +448,6 @@ export default function GiftPage() {
               </label>
             )}
           </div>
-
-          <label className="block text-sm">
-            <span className="mb-1 block text-white/50">Note (optional)</span>
-            <textarea className="input min-h-20" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} />
-          </label>
 
           {(imagePayload || fees) && (
             <div className="rounded border border-white/10 bg-white/5 px-4 py-3 text-xs space-y-1.5">

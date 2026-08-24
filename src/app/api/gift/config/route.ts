@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { getCoreCollectionAddress } from "@/lib/core-collection";
+import {
+  GIFT_NAME,
+  GIFT_SYMBOL,
+} from "@/lib/gift-metadata";
 import { getSolanaNetwork } from "@/lib/solana-config";
 
 export const runtime = "nodejs";
@@ -15,5 +19,7 @@ export async function GET() {
     network,
     coreCollectionAddress,
     coreCollectionName,
+    giftSymbol: GIFT_SYMBOL,
+    giftName: GIFT_NAME,
   });
 }

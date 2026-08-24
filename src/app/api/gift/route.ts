@@ -11,6 +11,13 @@ import { newId, saveCollection, slugify, getCollection } from "@/lib/store";
 import { rateLimit } from "@/lib/rate-limit";
 import { defaultPayments, type Collection, type GeneratedToken } from "@/lib/types";
 import { buildGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
+import {
+  GIFT_DESCRIPTION,
+  GIFT_MINT_NAME,
+  GIFT_NAME,
+  GIFT_SYMBOL,
+  defaultGiftAttributes,
+} from "@/lib/gift-metadata";
 import { explorerClusterQuery, parseNetwork } from "@/lib/solana-config";
 import { verifyMintTransaction } from "@/lib/verify-mint";
 
@@ -23,10 +30,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 });
 
   const body = await req.json() as {
-    name?: string;
     recipient?: string;
     payer?: string;
-    note?: string;
     imageUri?: string;
     metadataUri?: string;
     contentType?: string;
@@ -34,13 +39,8 @@ export async function POST(req: NextRequest) {
     network?: string;
   };
 
-  const name = String(body.name || "Gift NFT").trim() || "Gift NFT";
-  if (name.length > 32)
-    return NextResponse.json({ error: "Name must be 32 characters or fewer" }, { status: 400 });
-
   const recipient = String(body.recipient || "").trim();
   const payer = String(body.payer || "").trim();
-  const note = String(body.note || "").slice(0, 200);
   const imageUri = String(body.imageUri || "").trim();
   const metadataUri = String(body.metadataUri || "").trim();
   const contentType = String(body.contentType || "image/png");
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Metadata must be uploaded to Arweave first" }, { status: 400 });
 
   const id = newId();
-  const nftName = `${name} #1`;
+  const nftName = GIFT_MINT_NAME;
 
   let txBase64: string | null = null;
   let assetAddress: string | null = null;
@@ -80,11 +80,7 @@ export async function POST(req: NextRequest) {
   const token: GeneratedToken = {
     tokenId: 1,
     dna: "gift",
-    attributes: [
-      ...(note ? [{ trait_type: "Note", value: note }] : []),
-      { trait_type: "Type", value: "Gift" },
-      { trait_type: "Edition", value: "1/1" },
-    ],
+    attributes: defaultGiftAttributes(),
     imageRelPath: `images/1${safeExt}`,
     metadataRelPath: "metadata/1.json",
     imageUri,
@@ -95,10 +91,10 @@ export async function POST(req: NextRequest) {
 
   const collection: Collection = {
     id,
-    slug: slugify(name),
-    name,
-    symbol: name.slice(0, 6).toUpperCase().replace(/\s/g, ""),
-    description: note || `1/1 gift from ${payer} to ${recipient}.`,
+    slug: slugify(GIFT_NAME),
+    name: GIFT_NAME,
+    symbol: GIFT_SYMBOL,
+    description: GIFT_DESCRIPTION,
     nameTemplate: "{name} #{id}",
     chain: "solana",
     status: txBase64 ? "draft" : "sold_out",
