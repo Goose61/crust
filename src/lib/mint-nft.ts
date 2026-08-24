@@ -27,7 +27,7 @@ import {
 import { create } from "@metaplex-foundation/mpl-core";
 import { base64 } from "@metaplex-foundation/umi/serializers";
 import { Keypair, VersionedTransaction } from "@solana/web3.js";
-import { getRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
+import { getDirectRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
 import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
 import { fetchCoreCollection, getCoreCollectionAddress } from "./core-collection";
 import type { PendingMint } from "./types";
@@ -139,7 +139,7 @@ async function buildUnsignedGiftTx(params: {
   const platformSecret = getPlatformSecretKey();
   if (!platformSecret) throw new Error("Server mint key not configured.");
 
-  const rpcUrl = getRpcUrl(params.network);
+  const rpcUrl = getDirectRpcUrl(params.network);
   const umi = createMintUmi();
 
   const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(platformSecret);
@@ -194,32 +194,44 @@ async function buildUnsignedGiftTx(params: {
  * Simulate an unsigned tx before Phantom signing (Phantom docs: sigVerify false).
  * @see https://docs.phantom.com/solana/sending-a-transaction
  */
+async function serverRpcCall<T>(
+  rpcUrl: string,
+  method: string,
+  params: unknown[],
+  timeoutMs = 30_000,
+): Promise<T> {
+  const res = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await res.text();
+  if (!text.trim()) {
+    throw new Error(`Solana RPC returned empty body (HTTP ${res.status}, ${method})`);
+  }
+  const json = JSON.parse(text) as { result?: T; error?: { message: string } };
+  if (json.error) throw new Error(json.error.message);
+  return json.result as T;
+}
+
+/**
+ * Simulate an unsigned tx before Phantom signing (Phantom docs: sigVerify false).
+ * @see https://docs.phantom.com/solana/sending-a-transaction
+ */
 export async function simulateUnsignedTransaction(
   txBase64: string,
   network?: SolanaNetwork,
 ): Promise<void> {
-  const rpcUrl = getRpcUrl(network ?? getSolanaNetwork());
-  const res = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "simulateTransaction",
-      params: [
-        txBase64,
-        { encoding: "base64", sigVerify: false, commitment: "confirmed" },
-      ],
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  const json = (await res.json()) as {
-    result?: { value?: { err?: unknown } };
-    error?: { message?: string };
-  };
-  if (json.error) throw new Error(`Simulation RPC error: ${json.error.message}`);
-  const err = json.result?.value?.err;
+  const net = network ?? getSolanaNetwork();
+  const rpcUrl = getDirectRpcUrl(net);
+  const result = await serverRpcCall<{ value?: { err?: unknown } }>(
+    rpcUrl,
+    "simulateTransaction",
+    [txBase64, { encoding: "base64", sigVerify: false, commitment: "confirmed" }],
+    15_000,
+  );
+  const err = result?.value?.err;
   if (err) {
     throw new Error(`Transaction would fail on-chain: ${JSON.stringify(err)}`);
   }
@@ -313,7 +325,7 @@ export async function cosignAndSubmitGiftTransaction(params: {
   }
 
   const network = params.network ?? getSolanaNetwork();
-  const rpcUrl = getRpcUrl(network);
+  const rpcUrl = getDirectRpcUrl(network);
 
   const tx = VersionedTransaction.deserialize(
     Buffer.from(params.userSignedTxBase64, "base64"),
@@ -337,23 +349,9 @@ export async function cosignAndSubmitGiftTransaction(params: {
   }
   tx.sign(cosigners);
 
-  const res = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "sendTransaction",
-      params: [
-        Buffer.from(tx.serialize()).toString("base64"),
-        { encoding: "base64", skipPreflight: false, preflightCommitment: "confirmed" },
-      ],
-    }),
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  const json = (await res.json()) as { result?: string; error?: { message: string } };
-  if (json.error) throw new Error(json.error.message);
-  if (!json.result) throw new Error("RPC returned no transaction signature");
-  return json.result;
+  const txSignature = await serverRpcCall<string>(rpcUrl, "sendTransaction", [
+    Buffer.from(tx.serialize()).toString("base64"),
+    { encoding: "base64", skipPreflight: false, preflightCommitment: "confirmed" },
+  ]);
+  return txSignature;
 }

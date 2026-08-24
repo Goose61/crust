@@ -13,7 +13,7 @@ import { parseNetwork } from "@/lib/solana-config";
 import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {

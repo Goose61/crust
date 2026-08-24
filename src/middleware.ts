@@ -18,7 +18,7 @@ export function middleware(req: NextRequest) {
           : ALLOWED_ORIGINS[0];          // prod: restrict to allowlist
 
     corsHeaders["Access-Control-Allow-Origin"] = allowed;
-    corsHeaders["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+    corsHeaders["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS";
     corsHeaders["Access-Control-Allow-Headers"] = "Content-Type, X-Requested-With";
     corsHeaders["Vary"] = "Origin";
 

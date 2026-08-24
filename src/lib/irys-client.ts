@@ -65,7 +65,11 @@ async function rpcCall<T>(rpcUrl: string, method: string, params: unknown[]): Pr
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
-  const json = (await res.json()) as { result?: T; error?: { message?: string } };
+  const text = await res.text();
+  if (!text.trim()) {
+    throw new Error(`Solana RPC returned empty response (HTTP ${res.status}). Try again in a moment.`);
+  }
+  const json = JSON.parse(text) as { result?: T; error?: { message?: string } };
   if (json.error) throw new Error(json.error.message ?? "RPC error");
   return json.result as T;
 }

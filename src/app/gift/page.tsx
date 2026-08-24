@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useWallet } from "@/components/WalletProvider";
 import { explorerClusterQuery, getClientNetwork, type SolanaNetwork } from "@/lib/solana-config";
 import { networkLabel, phantomNetworkHint, uploadGiftWithPhantom } from "@/lib/irys-client";
+import { readJsonResponse } from "@/lib/fetch-json";
 
 type FeeBreakdown = {
   user: {
@@ -175,13 +176,13 @@ export default function GiftPage() {
           network,
         }),
       });
-      const data = await res.json() as {
+      const data = await readJsonResponse<{
         collectionId?: string;
         txBase64?: string;
         assetAddress?: string;
         requiresWalletSignature?: boolean;
         error?: string;
-      };
+      }>(res);
       if (!res.ok) throw new Error(data.error ?? "Failed to build mint transaction");
 
       if (!data.requiresWalletSignature || !data.txBase64) {
@@ -194,11 +195,15 @@ export default function GiftPage() {
       const txSignature = await signMintTx(data.collectionId!, network);
 
       setStage("confirming");
-      await fetch("/api/gift", {
+      const confirmRes = await fetch("/api/gift", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ collectionId: data.collectionId, txSignature, network }),
       });
+      const confirmData = await readJsonResponse<{ ok?: boolean; error?: string }>(confirmRes);
+      if (!confirmRes.ok || !confirmData.ok) {
+        throw new Error(confirmData.error ?? "Failed to confirm mint on server");
+      }
 
       setResult({
         collectionId: data.collectionId!,

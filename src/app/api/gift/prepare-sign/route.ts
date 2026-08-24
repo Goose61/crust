@@ -17,7 +17,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import type { Collection, PendingMint } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 function resolvePendingMint(collection: Collection, payer: string): PendingMint {
   const pm = collection.pendingMint;

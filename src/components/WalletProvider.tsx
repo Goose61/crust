@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getPhantomProvider } from "@/lib/irys-client";
+import { readJsonResponse } from "@/lib/fetch-json";
 import { PhantomConnectModal } from "@/components/PhantomConnectModal";
 import { getRpcUrl, getSolanaNetwork, isDevnetNetwork } from "@/lib/solana-config";
 
@@ -128,7 +129,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ collectionId, payer: publicKey, network }),
       });
-      const prepData = (await prep.json()) as { txBase64?: string; error?: string };
+      const prepData = await readJsonResponse<{ txBase64?: string; error?: string }>(prep);
       if (!prep.ok || !prepData.txBase64) {
         throw new Error(prepData.error ?? "Failed to prepare transaction for signing");
       }
@@ -145,7 +146,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ collectionId, signedTxBase64: signedB64, network }),
       });
-      const data = (await res.json()) as { txSignature?: string; error?: string };
+      const data = await readJsonResponse<{ txSignature?: string; error?: string }>(res);
       if (!res.ok) throw new Error(data.error ?? "Co-sign failed");
       if (!data.txSignature) throw new Error("No transaction signature returned");
       return data.txSignature;
