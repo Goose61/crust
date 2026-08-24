@@ -20,6 +20,8 @@ type GiftResult = {
   collectionId: string;
   assetAddress?: string;
   txSignature?: string;
+  metadataUri?: string;
+  imageUri?: string;
   storageMethod: string;
   onChain: boolean;
 };
@@ -227,7 +229,13 @@ export default function GiftPage() {
       if (!res.ok) throw new Error(data.error ?? "Failed to build mint transaction");
 
       if (!data.requiresWalletSignature || !data.txBase64) {
-        setResult({ collectionId: data.collectionId!, storageMethod: "arweave", onChain: false });
+        setResult({
+          collectionId: data.collectionId!,
+          metadataUri,
+          imageUri,
+          storageMethod: "arweave",
+          onChain: false,
+        });
         return;
       }
 
@@ -250,6 +258,8 @@ export default function GiftPage() {
         collectionId: data.collectionId!,
         assetAddress: data.assetAddress,
         txSignature,
+        metadataUri,
+        imageUri,
         storageMethod: "arweave",
         onChain: true,
       });
@@ -317,6 +327,26 @@ export default function GiftPage() {
               className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-primary hover:border-primary/40"
             >
               View mint transaction on Solana Explorer ↗
+            </a>
+          )}
+          {result.metadataUri && (
+            <a
+              href={result.metadataUri}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-primary hover:border-primary/40"
+            >
+              View metadata JSON on Arweave ↗
+            </a>
+          )}
+          {result.imageUri && (
+            <a
+              href={result.imageUri}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 hover:text-white"
+            >
+              View image on Arweave ↗
             </a>
           )}
           <a
