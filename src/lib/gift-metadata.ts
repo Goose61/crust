@@ -6,18 +6,28 @@
 /** Fixed brand symbol for all gift mints (no user input). */
 export const GIFT_SYMBOL = "$PIZZA";
 
-/** Display / collection record name. */
+/** Default display name when the user leaves the name field blank. */
 export const GIFT_NAME = "$PIZZA Gift";
-
-/** On-chain Metaplex Core asset name (32-char limit). */
-export const GIFT_MINT_NAME = "$PIZZA Gift #1";
 
 export const GIFT_DESCRIPTION =
   "A 1/1 $PIZZA gift NFT from Dough Boi. Paid in SOL, delivered on-chain.";
 
 export const GIFT_COLLECTION_FAMILY = "Dough Boi";
 
+/** Metaplex Core on-chain name (32-char limit). */
+export function giftMintName(displayName: string): string {
+  const base = displayName.trim() || GIFT_NAME;
+  return `${base} #1`.slice(0, 32);
+}
+
+export function giftDescription(note?: string): string {
+  const trimmed = note?.trim();
+  return trimmed || GIFT_DESCRIPTION;
+}
+
 export type GiftMetadataParams = {
+  name: string;
+  note?: string;
   imageUri: string;
   imageContentType: string;
   creatorAddress: string;
@@ -29,23 +39,17 @@ export type GiftMetadataParams = {
 /** Build Arweave metadata JSON uploaded before the Core mint. */
 export function buildGiftMetadataJson(params: GiftMetadataParams): string {
   const collectionName = params.coreCollectionName?.trim() || "Dough Boi Gifts";
+  const mintName = giftMintName(params.name);
 
   return JSON.stringify(
     {
-      name: GIFT_MINT_NAME,
+      name: mintName,
       symbol: GIFT_SYMBOL,
-      description: GIFT_DESCRIPTION,
+      description: giftDescription(params.note),
       image: params.imageUri,
       ...(params.externalUrl ? { external_url: params.externalUrl } : {}),
       seller_fee_basis_points: 0,
-      attributes: [
-        { trait_type: "Type", value: "Gift" },
-        { trait_type: "Edition", value: "1/1" },
-        { trait_type: "Brand", value: GIFT_SYMBOL },
-        ...(params.coreCollectionAddress
-          ? [{ trait_type: "Collection", value: collectionName }]
-          : []),
-      ],
+      attributes: buildGiftAttributes(params.note),
       collection: {
         name: collectionName,
         family: GIFT_COLLECTION_FAMILY,
@@ -67,9 +71,10 @@ export function buildGiftMetadataJson(params: GiftMetadataParams): string {
   );
 }
 
-/** Default token attributes stored in the app database. */
-export function defaultGiftAttributes() {
+/** Token attributes for app DB + Arweave metadata. */
+export function buildGiftAttributes(note?: string) {
   return [
+    ...(note?.trim() ? [{ trait_type: "Note", value: note.trim() }] : []),
     { trait_type: "Type", value: "Gift" },
     { trait_type: "Edition", value: "1/1" },
     { trait_type: "Brand", value: GIFT_SYMBOL },

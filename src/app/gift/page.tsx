@@ -5,7 +5,7 @@ import { useWallet } from "@/components/WalletProvider";
 import { explorerClusterQuery, getClientNetwork } from "@/lib/solana-config";
 import { uploadGiftWithPhantom } from "@/lib/irys-client";
 import { readJsonResponse } from "@/lib/fetch-json";
-import { buildGiftMetadataJson } from "@/lib/gift-metadata";
+import { buildGiftMetadataJson, GIFT_NAME } from "@/lib/gift-metadata";
 
 type FeeBreakdown = {
   user: {
@@ -56,8 +56,10 @@ export default function GiftPage() {
   const [file, setFile] = useState<File | null>(null);
   const [imagePayload, setImagePayload] = useState<ImagePayload | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [name, setName] = useState(GIFT_NAME);
   const [recipient, setRecipient] = useState("");
   const [mintToSelf, setMintToSelf] = useState(false);
+  const [note, setNote] = useState("");
 
   const [fees, setFees] = useState<FeeBreakdown | null>(null);
   const [feesLoading, setFeesLoading] = useState(false);
@@ -184,6 +186,8 @@ export default function GiftPage() {
         onStage: (s) => setStage(s === "funding" ? "storage" : "uploading"),
         buildMetadata: (uri) =>
           buildGiftMetadataJson({
+            name: name.trim() || GIFT_NAME,
+            note: note || undefined,
             imageUri: uri,
             imageContentType: imageInfo.contentType,
             creatorAddress: publicKey,
@@ -202,8 +206,10 @@ export default function GiftPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          name: name.trim() || GIFT_NAME,
           recipient: recipient.trim(),
           payer: publicKey,
+          note,
           imageUri,
           metadataUri,
           contentType: imageInfo.contentType,
@@ -327,7 +333,7 @@ export default function GiftPage() {
             if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
             previewUrlRef.current = null;
             setResult(null); setFile(null); setImagePayload(null); setPreview(null);
-            setRecipient(""); setMintToSelf(false);
+            setName(GIFT_NAME); setRecipient(""); setMintToSelf(false); setNote("");
             setFees(null); setError(null); setStage("idle");
           }}
           className="text-sm text-white/40 hover:text-white/70"
@@ -417,6 +423,11 @@ export default function GiftPage() {
         </label>
 
         <div className="space-y-4">
+          <label className="block text-sm">
+            <span className="mb-1 block text-white/50">Name</span>
+            <input className="input" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} />
+          </label>
+
           <div className="block text-sm">
             <span className="mb-1 block text-white/50">Recipient wallet</span>
             <input
@@ -448,6 +459,11 @@ export default function GiftPage() {
               </label>
             )}
           </div>
+
+          <label className="block text-sm">
+            <span className="mb-1 block text-white/50">Note (optional)</span>
+            <textarea className="input min-h-20" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} />
+          </label>
 
           {(imagePayload || fees) && (
             <div className="rounded border border-white/10 bg-white/5 px-4 py-3 text-xs space-y-1.5">
