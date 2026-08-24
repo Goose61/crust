@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useWallet } from "@/components/WalletProvider";
-import { explorerClusterQuery, getClientNetwork, type SolanaNetwork } from "@/lib/solana-config";
-import { networkLabel, phantomNetworkHint, uploadGiftWithPhantom } from "@/lib/irys-client";
+import { explorerClusterQuery, getClientNetwork } from "@/lib/solana-config";
+import { uploadGiftWithPhantom } from "@/lib/irys-client";
 import { readJsonResponse } from "@/lib/fetch-json";
 
 type FeeBreakdown = {
@@ -31,21 +31,29 @@ function fmtUsd(usd: number) {
   return usd.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 }
 
-async function detectImageAsync(file: File): Promise<{ ext: string; contentType: string } | null> {
-  const buf = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+async function detectImageFromBytes(buf: Uint8Array): Promise<{ ext: string; contentType: string } | null> {
   if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50) return { ext: ".png", contentType: "image/png" };
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8) return { ext: ".jpeg", contentType: "image/jpeg" };
   if (buf.length >= 12 && buf[0] === 0x52 && buf[8] === 0x57) return { ext: ".webp", contentType: "image/webp" };
   return null;
 }
 
+type ImagePayload = {
+  bytes: Uint8Array;
+  ext: string;
+  contentType: string;
+  size: number;
+};
+
 export default function GiftPage() {
   const { publicKey, connecting, connect, signMintTx } = useWallet();
 
   const [file, setFile] = useState<File | null>(null);
+  const [imagePayload, setImagePayload] = useState<ImagePayload | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [name, setName] = useState("Gift NFT");
   const [recipient, setRecipient] = useState("");
+  const [mintToSelf, setMintToSelf] = useState(false);
   const [note, setNote] = useState("");
 
   const [fees, setFees] = useState<FeeBreakdown | null>(null);
@@ -59,22 +67,45 @@ export default function GiftPage() {
   const [result, setResult] = useState<GiftResult | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const previewUrlRef = useRef<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [siteNetwork, setSiteNetwork] = useState<SolanaNetwork | null>(null);
 
   useEffect(() => {
-    void getClientNetwork().then(setSiteNetwork);
-  }, []);
+    if (mintToSelf && publicKey) setRecipient(publicKey);
+  }, [mintToSelf, publicKey]);
 
-  function applyImageFile(next: File | null) {
+  async function applyImageFile(next: File | null) {
     if (!next) return;
     if (!["image/png", "image/jpeg", "image/webp"].includes(next.type)) {
       setError("Use a PNG, JPEG, or WebP image.");
       return;
     }
-    setFile(next);
-    setPreview(URL.createObjectURL(next));
-    setError(null);
+    try {
+      // Snapshot bytes immediately — File handles go stale after wallet popups on some browsers.
+      const bytes = new Uint8Array(await next.arrayBuffer());
+      const imageInfo = await detectImageFromBytes(bytes);
+      if (!imageInfo) {
+        setError("Use a PNG, JPEG, or WebP image.");
+        return;
+      }
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      const objectUrl = URL.createObjectURL(next);
+      previewUrlRef.current = objectUrl;
+      setFile(next);
+      setImagePayload({
+        bytes,
+        ext: imageInfo.ext,
+        contentType: imageInfo.contentType,
+        size: bytes.length,
+      });
+      setPreview(objectUrl);
+      setError(null);
+    } catch {
+      setError("Could not read that image. Choose the file again (do not rename or move it while sending).");
+      setFile(null);
+      setImagePayload(null);
+      setPreview(null);
+    }
   }
 
   function onDropImage(e: React.DragEvent) {
@@ -86,17 +117,17 @@ export default function GiftPage() {
 
   useEffect(() => {
     clearTimeout(debounceRef.current);
-    if (!file) { setFees(null); return; }
+    if (!imagePayload) { setFees(null); return; }
     setFeesLoading(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/gift/estimate?imageBytes=${file.size}`);
+        const res = await fetch(`/api/gift/estimate?imageBytes=${imagePayload.size}`);
         if (res.ok) setFees(await res.json());
       } finally {
         setFeesLoading(false);
       }
     }, 400);
-  }, [file]);
+  }, [imagePayload]);
 
   const stageLabel: Record<typeof stage, string> = {
     idle: publicKey ? "Send gift" : "Connect Phantom",
@@ -109,7 +140,7 @@ export default function GiftPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) { setError("Choose an image first."); return; }
+    if (!imagePayload) { setError("Choose an image first."); return; }
     if (!recipient.trim()) { setError("Enter the recipient wallet address."); return; }
     if (!publicKey) {
       try { await connect(); } catch (err) {
@@ -123,10 +154,12 @@ export default function GiftPage() {
 
     try {
       const network = await getClientNetwork();
-      const imageInfo = await detectImageAsync(file);
-      if (!imageInfo) throw new Error("Use a PNG, JPEG, or WebP image.");
+      const imageInfo = {
+        ext: imagePayload.ext,
+        contentType: imagePayload.contentType,
+      };
 
-      const imageBytes = new Uint8Array(await file.arrayBuffer());
+      const imageBytes = imagePayload.bytes;
       const nftName = `${name.trim() || "Gift NFT"} #1`;
 
       // ── Step 1: Arweave storage via Phantom (fund tx + upload signatures) ──
@@ -213,10 +246,15 @@ export default function GiftPage() {
         onChain: true,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Something went wrong";
-      setError(msg.toLowerCase().includes("rejected") || msg.toLowerCase().includes("cancel")
-        ? "Request cancelled in Phantom."
-        : msg);
+      const raw = err instanceof Error ? err.message : "Something went wrong";
+      const msg =
+        raw.toLowerCase().includes("rejected") || raw.toLowerCase().includes("cancel")
+          ? "Request cancelled in Phantom."
+          : raw.toLowerCase().includes("could not be read") ||
+              raw.toLowerCase().includes("permission")
+            ? "Image file could not be read. Choose the image again and approve Phantom without switching apps."
+            : raw;
+      setError(msg);
       setStage("idle");
     } finally {
       setBusy(false);
@@ -267,8 +305,10 @@ export default function GiftPage() {
         <button
           type="button"
           onClick={() => {
-            setResult(null); setFile(null); setPreview(null);
-            setName("Gift NFT"); setRecipient(""); setNote("");
+            if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+            previewUrlRef.current = null;
+            setResult(null); setFile(null); setImagePayload(null); setPreview(null);
+            setName("Gift NFT"); setRecipient(""); setMintToSelf(false); setNote("");
             setFees(null); setError(null); setStage("idle");
           }}
           className="text-sm text-white/40 hover:text-white/70"
@@ -301,15 +341,6 @@ export default function GiftPage() {
           >
             {connecting ? "Connecting…" : "Connect Phantom"}
           </button>
-        </div>
-      )}
-
-      {siteNetwork && (
-        <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/90">
-          <p className="font-medium text-amber-100">
-            Site network: {networkLabel(siteNetwork)}
-          </p>
-          <p className="mt-1 text-xs text-amber-100/70">{phantomNetworkHint(siteNetwork)}</p>
         </div>
       )}
 
@@ -372,23 +403,44 @@ export default function GiftPage() {
             <input className="input" value={name} maxLength={32} onChange={(e) => setName(e.target.value)} />
           </label>
 
-          <label className="block text-sm">
+          <div className="block text-sm">
             <span className="mb-1 block text-white/50">Recipient wallet</span>
             <input
               className="input font-mono text-xs"
               placeholder="Solana address (base58)"
               value={recipient}
               spellCheck={false}
-              onChange={(e) => { setRecipient(e.target.value); setError(null); }}
+              readOnly={mintToSelf}
+              onChange={(e) => {
+                setMintToSelf(false);
+                setRecipient(e.target.value);
+                setError(null);
+              }}
             />
-          </label>
+            {publicKey && (
+              <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-white/60">
+                <input
+                  type="checkbox"
+                  className="rounded border-white/30"
+                  checked={mintToSelf}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setMintToSelf(checked);
+                    setRecipient(checked ? publicKey : "");
+                    setError(null);
+                  }}
+                />
+                Mint to my connected wallet
+              </label>
+            )}
+          </div>
 
           <label className="block text-sm">
             <span className="mb-1 block text-white/50">Note (optional)</span>
             <textarea className="input min-h-20" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} />
           </label>
 
-          {(file || fees) && (
+          {(imagePayload || fees) && (
             <div className="rounded border border-white/10 bg-white/5 px-4 py-3 text-xs space-y-1.5">
               <p className="text-white/40 uppercase tracking-wider text-[10px] mb-2">You pay (live estimate)</p>
               {feesLoading && <p className="text-white/30">Fetching fees…</p>}
