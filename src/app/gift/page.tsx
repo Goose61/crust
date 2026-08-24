@@ -5,6 +5,7 @@ import { useWallet } from "@/components/WalletProvider";
 import { explorerClusterQuery, getClientNetwork } from "@/lib/solana-config";
 import { uploadGiftWithPhantom } from "@/lib/irys-client";
 import { readJsonResponse } from "@/lib/fetch-json";
+import { buildGiftMetadataJson } from "@/lib/gift-metadata";
 
 type FeeBreakdown = {
   user: {
@@ -34,7 +35,6 @@ function fmtUsd(usd: number) {
 async function detectImageFromBytes(buf: Uint8Array): Promise<{ ext: string; contentType: string } | null> {
   if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50) return { ext: ".png", contentType: "image/png" };
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8) return { ext: ".jpeg", contentType: "image/jpeg" };
-  if (buf.length >= 12 && buf[0] === 0x52 && buf[8] === 0x57) return { ext: ".webp", contentType: "image/webp" };
   return null;
 }
 
@@ -43,6 +43,11 @@ type ImagePayload = {
   ext: string;
   contentType: string;
   size: number;
+};
+
+type GiftConfig = {
+  coreCollectionAddress: string | null;
+  coreCollectionName: string;
 };
 
 export default function GiftPage() {
@@ -69,6 +74,16 @@ export default function GiftPage() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const previewUrlRef = useRef<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [giftConfig, setGiftConfig] = useState<GiftConfig | null>(null);
+
+  useEffect(() => {
+    void fetch("/api/gift/config")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: GiftConfig | null) => {
+        if (data) setGiftConfig(data);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (mintToSelf && publicKey) setRecipient(publicKey);
@@ -76,8 +91,8 @@ export default function GiftPage() {
 
   async function applyImageFile(next: File | null) {
     if (!next) return;
-    if (!["image/png", "image/jpeg", "image/webp"].includes(next.type)) {
-      setError("Use a PNG, JPEG, or WebP image.");
+    if (!["image/png", "image/jpeg"].includes(next.type)) {
+      setError("Use a PNG or JPEG image — wallets display these most reliably.");
       return;
     }
     try {
@@ -85,7 +100,7 @@ export default function GiftPage() {
       const bytes = new Uint8Array(await next.arrayBuffer());
       const imageInfo = await detectImageFromBytes(bytes);
       if (!imageInfo) {
-        setError("Use a PNG, JPEG, or WebP image.");
+        setError("Use a PNG or JPEG image — wallets display these most reliably.");
         return;
       }
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
@@ -171,25 +186,20 @@ export default function GiftPage() {
         network,
         onStage: (s) => setStage(s === "funding" ? "storage" : "uploading"),
         buildMetadata: (uri) =>
-          JSON.stringify(
-            {
-              name: nftName,
-              description: note || "A 1/1 gift NFT.",
-              image: uri,
-              attributes: [
-                ...(note ? [{ trait_type: "Note", value: note }] : []),
-                { trait_type: "Type", value: "Gift" },
-                { trait_type: "Edition", value: "1/1" },
-              ],
-              properties: {
-                files: [{ uri, type: imageInfo.contentType }],
-                category: "image",
-                creators: [{ address: publicKey, share: 100 }],
-              },
-            },
-            null,
-            2,
-          ),
+          buildGiftMetadataJson({
+            name: nftName,
+            description: note || "A 1/1 gift NFT.",
+            imageUri: uri,
+            imageContentType: imageInfo.contentType,
+            note: note || undefined,
+            creatorAddress: publicKey,
+            coreCollectionAddress: giftConfig?.coreCollectionAddress,
+            coreCollectionName: giftConfig?.coreCollectionName,
+            externalUrl:
+              typeof window !== "undefined"
+                ? `${window.location.origin}/gift`
+                : undefined,
+          }),
       });
 
       // ── Step 2: build partially-signed mint tx ────────────────────────
@@ -278,12 +288,29 @@ export default function GiftPage() {
             )}
           </p>
         )}
+        {result.onChain && (
+          <p className="mt-3 text-xs text-white/40 max-w-md mx-auto">
+            Metaplex Core NFTs may not show in Phantom Collectibles immediately. Check{" "}
+            <span className="text-white/60">Collectibles → Hidden / Spam</span>, or open the asset
+            on Solana Explorer below.
+          </p>
+        )}
         <div className="space-y-3 mb-8 text-left mt-8">
           {result.assetAddress && (
-            <div className="rounded border border-white/10 bg-white/5 px-4 py-3">
-              <p className="text-xs text-white/40 mb-1 uppercase tracking-wider">Asset address</p>
-              <p className="font-mono text-xs text-white break-all">{result.assetAddress}</p>
-            </div>
+            <>
+              <div className="rounded border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xs text-white/40 mb-1 uppercase tracking-wider">Asset address</p>
+                <p className="font-mono text-xs text-white break-all">{result.assetAddress}</p>
+              </div>
+              <a
+                href={`https://explorer.solana.com/address/${result.assetAddress}${cluster}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-primary hover:border-primary/40"
+              >
+                View Core asset on Solana Explorer ↗
+              </a>
+            </>
           )}
           {result.txSignature && (
             <a
@@ -383,12 +410,12 @@ export default function GiftPage() {
           ) : (
             <span className="p-4 select-none">
               Drop image
-              <span className="block mt-1 text-xs text-white/30">PNG · JPEG · WebP</span>
+              <span className="block mt-1 text-xs text-white/30">PNG · JPEG</span>
             </span>
           )}
           <input
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept="image/png,image/jpeg"
             className="hidden"
             onChange={(e) => {
               applyImageFile(e.target.files?.[0] ?? null);
