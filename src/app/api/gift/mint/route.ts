@@ -106,9 +106,6 @@ export async function POST(req: NextRequest) {
       assetAddress: txResult.assetAddress,
       network,
       requiresWalletSignature: true,
-      ...(txResult.coreCollectionAddress
-        ? { coreCollectionAddress: txResult.coreCollectionAddress, verifiedCollection: true }
-        : {}),
     });
   } catch (err) {
     console.error("[POST /api/gift/mint]", err);

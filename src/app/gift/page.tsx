@@ -288,16 +288,15 @@ export default function GiftPage() {
         )}
         {result.onChain && (
           <p className="mt-3 text-xs text-white/40 max-w-md mx-auto">
-            Metaplex Core NFTs may not show in Phantom Collectibles immediately. Check{" "}
-            <span className="text-white/60">Collectibles → Hidden / Spam</span>, or open the asset
-            on Solana Explorer below.
+            NFTs usually appear in Phantom under Collectibles within a minute. If missing, check{" "}
+            <span className="text-white/60">Collectibles → Hidden / Spam</span>.
           </p>
         )}
         <div className="space-y-3 mb-8 text-left mt-8">
           {result.assetAddress && (
             <>
               <div className="rounded border border-white/10 bg-white/5 px-4 py-3">
-                <p className="text-xs text-white/40 mb-1 uppercase tracking-wider">Asset address</p>
+                <p className="text-xs text-white/40 mb-1 uppercase tracking-wider">Mint address</p>
                 <p className="font-mono text-xs text-white break-all">{result.assetAddress}</p>
               </div>
               <a
@@ -306,7 +305,7 @@ export default function GiftPage() {
                 rel="noopener noreferrer"
                 className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-primary hover:border-primary/40"
               >
-                View Core asset on Solana Explorer ↗
+                View NFT mint on Solana Explorer ↗
               </a>
             </>
           )}

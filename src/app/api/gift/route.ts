@@ -3,7 +3,7 @@
  * PATCH /api/gift — confirm on-chain mint after wallet signature
  *
  * Storage uploads happen client-side (minter pays via Irys).
- * This route only builds the Metaplex Core transaction and persists records.
+ * This route only builds the Token Metadata mint transaction and persists records.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -150,9 +150,6 @@ export async function POST(req: NextRequest) {
     assetAddress,
     network,
     requiresWalletSignature: !!txBase64,
-    ...(txResult?.coreCollectionAddress
-      ? { coreCollectionAddress: txResult.coreCollectionAddress, verifiedCollection: true }
-      : {}),
     ...(txBase64
       ? {}
       : {

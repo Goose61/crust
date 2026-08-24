@@ -13,7 +13,8 @@ import { dataViewSerializer } from "@metaplex-foundation/umi-serializer-data-vie
 import { defaultProgramRepository } from "@metaplex-foundation/umi-program-repository";
 import { web3JsEddsa } from "@metaplex-foundation/umi-eddsa-web3js";
 import { web3JsTransactionFactory } from "@metaplex-foundation/umi-transaction-factory-web3js";
-import { mplCore } from "@metaplex-foundation/mpl-core";
+import { mplTokenMetadata } from "@metaplex-foundation/mpl-token-metadata";
+import { mplToolbox } from "@metaplex-foundation/mpl-toolbox";
 
 export function createMintUmi(): Umi {
   const umi = createBaseUmi();
@@ -21,7 +22,8 @@ export function createMintUmi(): Umi {
   umi.use(defaultProgramRepository());
   umi.use(web3JsEddsa());
   umi.use(web3JsTransactionFactory());
-  umi.use(mplCore());
+  umi.use(mplTokenMetadata());
+  umi.use(mplToolbox());
   return umi;
 }
 

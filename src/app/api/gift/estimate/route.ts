@@ -3,8 +3,8 @@ import { isDevnetNetwork } from "@/lib/solana-config";
 
 export const runtime = "nodejs";
 
-// Metaplex Core on-chain costs (lamports) — https://www.metaplex.com/docs/smart-contracts/core
-const SOLANA_RENT_LAMPORTS = BigInt(2900000);
+// Token Metadata NFT on-chain costs (lamports) — mint + metadata + ATA accounts
+const SOLANA_RENT_LAMPORTS = BigInt(5_000_000);
 const MPL_PROTOCOL_LAMPORTS = BigInt(1500000);
 const TX_FEE_LAMPORTS = BigInt(5000);
 
@@ -61,7 +61,7 @@ export async function GET(req: Request) {
         protocol: {
           lamports: MPL_PROTOCOL_LAMPORTS.toString(),
           sol: toSol(MPL_PROTOCOL_LAMPORTS),
-          label: "Metaplex Core protocol fee",
+          label: "Metaplex protocol fee",
         },
         txFee: {
           lamports: TX_FEE_LAMPORTS.toString(),

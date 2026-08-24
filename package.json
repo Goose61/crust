@@ -17,6 +17,8 @@
     "@irys/web-upload": "^0.0.15",
     "@irys/web-upload-solana": "^0.1.8",
     "@metaplex-foundation/mpl-core": "^1.10.0",
+    "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
+    "@metaplex-foundation/mpl-toolbox": "^0.10.0",
     "@metaplex-foundation/umi": "^1.5.1",
     "@metaplex-foundation/umi-eddsa-web3js": "^1.5.1",
     "@metaplex-foundation/umi-program-repository": "^1.5.1",

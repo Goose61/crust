@@ -6,7 +6,7 @@
  *   2. simulateTransaction with sigVerify: false
  *
  * @see https://docs.phantom.com/solana/sending-a-transaction
- * @see https://www.metaplex.com/docs/smart-contracts/core/create-asset
+ * @see https://www.metaplex.com/docs/smart-contracts/token-metadata/guides/javascript/create-an-nft
  */
 
 import { NextRequest, NextResponse } from "next/server";
