@@ -291,14 +291,14 @@ export async function cosignAndSubmitGiftTransaction(params: {
 
   const assetSecret = secretKeyFromB64(params.pendingMint.assetSecretKeyB64);
   const assetKp = Keypair.fromSecretKey(assetSecret);
-  const platformKp = Keypair.fromSecretKey(platformSecret);
 
   if (assetKp.publicKey.toBase58() !== params.pendingMint.assetAddress) {
     throw new Error("Pending mint asset key does not match stored address.");
   }
 
-  // Phantom signed first; add platform + asset signatures afterward.
-  tx.sign([platformKp, assetKp]);
+  // Phantom signed as fee payer first; only the asset keypair co-signs afterward.
+  // Platform key (update authority) is not a required signer on Core createV2.
+  tx.sign([assetKp]);
 
   const res = await fetch(rpcUrl, {
     method: "POST",
