@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "setup:mainnet-collection": "node scripts/setup-mainnet-core-collection.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
