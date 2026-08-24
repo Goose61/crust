@@ -57,7 +57,9 @@ function createMinimalFetchRpc(
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`RPC HTTP ${res.status} (${method})`);
-    const json = (await res.json()) as { result?: T; error?: { message: string } };
+    const text = await res.text();
+    if (!text.trim()) throw new Error(`RPC empty body (${method})`);
+    const json = JSON.parse(text) as { result?: T; error?: { message: string } };
     if (json.error) throw new Error(json.error.message);
     return json.result as T;
   }
@@ -70,23 +72,24 @@ function createMinimalFetchRpc(
         lamports: number;
         owner: string;
         executable: boolean;
-        rentEpoch: number;
+        rentEpoch?: number;
         data: [string, string];
-      } | null;
-      const value = await rpcCall<AccountInfo>("getAccountInfo", [
+      };
+      const result = await rpcCall<{ value: AccountInfo | null }>("getAccountInfo", [
         pubkey.toString(),
         { encoding: "base64", commitment: options?.commitment ?? "confirmed" },
       ]);
+      const value = result?.value;
       if (!value) {
         return { exists: false, publicKey: pubkey };
       }
       return {
         exists: true,
         publicKey: pubkey,
-        lamports: lamports(value.lamports),
+        lamports: lamports(value.lamports ?? 0),
         owner: umiPublicKey(value.owner),
-        executable: value.executable,
-        rentEpoch: BigInt(value.rentEpoch),
+        executable: value.executable ?? false,
+        ...(value.rentEpoch != null ? { rentEpoch: BigInt(value.rentEpoch) } : {}),
         data: Buffer.from(value.data[0], "base64"),
       };
     },
@@ -109,7 +112,16 @@ export async function fetchCoreCollection(
 
   const rpcUrl = getDirectRpcUrl(net);
   attachMinimalFetchRpc(umi as Umi, rpcUrl);
-  const collection = await fetchCollection(umi, address);
+  let collection: CollectionV1;
+  try {
+    collection = await fetchCollection(umi, address);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Could not load Core Collection ${address} on ${net}: ${msg}. ` +
+        "Check CORE_COLLECTION_ADDRESS matches the cluster you are minting on.",
+    );
+  }
   collectionCache.set(key, collection);
   return collection;
 }
