@@ -30,6 +30,7 @@ import {
   createV1,
   mintV1,
   verifyCollectionV1,
+  verifyCreatorV1,
   findMetadataPda,
   TokenStandard,
 } from "@metaplex-foundation/mpl-token-metadata";
@@ -148,7 +149,6 @@ async function buildUnsignedGiftTx(params: {
       creators: [
         {
           address: updateAuthority.publicKey,
-          // Verified after platform co-signs; true here breaks unsigned simulation.
           verified: false,
           share: 100,
         },
@@ -168,8 +168,9 @@ async function buildUnsignedGiftTx(params: {
     }),
   );
 
+  const metadata = findMetadataPda(umi, { mint: mintSigner.publicKey });
+
   if (tmCollectionMint) {
-    const metadata = findMetadataPda(umi, { mint: mintSigner.publicKey });
     builder = builder.add(
       verifyCollectionV1(umi, {
         authority: updateAuthority,
@@ -178,6 +179,14 @@ async function buildUnsignedGiftTx(params: {
       }),
     );
   }
+
+  // Platform co-signs so Phantom sees a verified creator (Collectibles indexing).
+  builder = builder.add(
+    verifyCreatorV1(umi, {
+      authority: updateAuthority,
+      metadata,
+    }),
+  );
 
   const tx = await builder
     .useV0()
