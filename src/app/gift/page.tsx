@@ -244,13 +244,9 @@ export default function GiftPage() {
             imageContentType: imageInfo.contentType,
             platformCreatorAddress:
               giftConfig?.platformCreatorAddress ?? publicKey,
-            giftedByAddress: publicKey,
+            payerAddress: publicKey,
             collectionName: giftConfig?.giftCollectionName,
             collectionMint: giftConfig?.giftCollectionMint,
-            externalUrl:
-              typeof window !== "undefined"
-                ? `${window.location.origin}/gift`
-                : undefined,
           }),
       });
 
@@ -350,8 +346,11 @@ export default function GiftPage() {
         )}
         {result.onChain && (
           <p className="mt-3 text-xs text-white/40 max-w-md mx-auto">
-            NFTs usually appear in Phantom under Collectibles within a minute. If missing, check{" "}
-            <span className="text-white/60">Collectibles → Hidden / Spam</span>.
+            Your mint succeeded on-chain (two Phantom steps: storage, then mint — no extra signature).
+            Phantom may file new NFTs under{" "}
+            <span className="text-white/60">Collectibles → Hidden / Spam</span>; open the NFT and
+            tap <span className="text-white/60">Not spam</span> if it appears there. Explorer links
+            below always show the token.
           </p>
         )}
         <div className="space-y-3 mb-8 text-left mt-8">

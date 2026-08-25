@@ -19,9 +19,12 @@ export function getGiftCollectionMint(network?: SolanaNetwork): string | null {
 }
 
 export function getGiftCollectionName(): string {
-  return (
+  const fromEnv =
     process.env.GIFT_COLLECTION_NAME?.trim() ||
-    process.env.CORE_COLLECTION_NAME?.trim() ||
-    "Dough Boi Gifts"
-  );
+    process.env.CORE_COLLECTION_NAME?.trim();
+  if (fromEnv) {
+    // Normalize legacy env values that trigger Phantom spam heuristics.
+    return fromEnv.replace(/\s+gifts?$/i, "").trim() || "Dough Boi";
+  }
+  return "Dough Boi";
 }

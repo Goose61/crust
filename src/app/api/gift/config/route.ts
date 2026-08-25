@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getGiftCollectionMint, getGiftCollectionName } from "@/lib/gift-collection";
 import {
+  GIFT_COLLECTION_DISPLAY_NAME,
+  GIFT_EXTERNAL_URL,
   GIFT_NAME,
   GIFT_SYMBOL,
 } from "@/lib/gift-metadata";
@@ -23,5 +25,7 @@ export async function GET() {
     giftCollectionName,
     giftSymbol: GIFT_SYMBOL,
     giftName: GIFT_NAME,
+    giftExternalUrl: GIFT_EXTERNAL_URL,
+    giftCollectionDisplayName: GIFT_COLLECTION_DISPLAY_NAME,
   });
 }
