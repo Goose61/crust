@@ -23,8 +23,9 @@ import {
   createSignerFromKeypair,
   publicKey as umiPublicKey,
   percentAmount,
+  transactionBuilder,
 } from "@metaplex-foundation/umi";
-import { createNft } from "@metaplex-foundation/mpl-token-metadata";
+import { createV1, mintV1, TokenStandard } from "@metaplex-foundation/mpl-token-metadata";
 import { base64 } from "@metaplex-foundation/umi/serializers";
 import { Keypair, VersionedTransaction } from "@solana/web3.js";
 import { getDirectRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
@@ -153,24 +154,37 @@ async function buildUnsignedGiftTx(params: {
   const payerNoop = createNoopSigner(umiPublicKey(params.payer));
   const blockhash = await fetchLatestBlockhash(rpcUrl);
 
-  const tx = await createNft(umi, {
-    mint: mintSigner,
-    authority: mintSigner,
-    name: params.name,
-    symbol: GIFT_SYMBOL,
-    uri: params.metadataUri,
-    sellerFeeBasisPoints: percentAmount(0),
-    tokenOwner: umiPublicKey(params.recipient),
-    updateAuthority,
-    payer: payerNoop,
-    creators: [
-      {
-        address: updateAuthority.publicKey,
-        verified: true,
-        share: 100,
-      },
-    ],
-  })
+  const tx = await transactionBuilder()
+    .add(
+      createV1(umi, {
+        mint: mintSigner,
+        authority: mintSigner,
+        name: params.name,
+        symbol: GIFT_SYMBOL,
+        uri: params.metadataUri,
+        sellerFeeBasisPoints: percentAmount(0),
+        updateAuthority,
+        payer: payerNoop,
+        creators: [
+          {
+            address: updateAuthority.publicKey,
+            verified: true,
+            share: 100,
+          },
+        ],
+      }),
+    )
+    .add(
+      mintV1(umi, {
+        mint: mintSigner.publicKey,
+        // NonFungible mints require metadata update authority, not mint authority.
+        authority: updateAuthority,
+        tokenOwner: umiPublicKey(params.recipient),
+        tokenStandard: TokenStandard.NonFungible,
+        amount: 1,
+        payer: payerNoop,
+      }),
+    )
     .useV0()
     .setFeePayer(payerNoop)
     .setBlockhash(blockhash)
