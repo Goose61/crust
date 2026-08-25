@@ -53,6 +53,16 @@ type GiftConfig = {
   giftCollectionName: string;
 };
 
+type BalanceCheck = {
+  balanceSol: number;
+  requiredSol: number;
+  storageSol: number;
+  mintSol: number;
+  shortfallSol: number;
+  sufficient: boolean;
+  message: string | null;
+};
+
 export default function GiftPage() {
   const { publicKey, connecting, connect, signMintTx } = useWallet();
 
@@ -78,6 +88,8 @@ export default function GiftPage() {
   const previewUrlRef = useRef<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [giftConfig, setGiftConfig] = useState<GiftConfig | null>(null);
+  const [balanceCheck, setBalanceCheck] = useState<BalanceCheck | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
 
   useEffect(() => {
     void fetch("/api/gift/config")
@@ -147,6 +159,39 @@ export default function GiftPage() {
     }, 400);
   }, [imagePayload]);
 
+  useEffect(() => {
+    if (!publicKey || !imagePayload) {
+      setBalanceCheck(null);
+      return;
+    }
+
+    let cancelled = false;
+    setBalanceLoading(true);
+
+    void (async () => {
+      try {
+        const network = await getClientNetwork();
+        const res = await fetch(
+          `/api/gift/balance-check?wallet=${encodeURIComponent(publicKey)}&imageBytes=${imagePayload.size}&network=${network}`,
+        );
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as BalanceCheck;
+        if (!cancelled) setBalanceCheck(data);
+      } catch {
+        if (!cancelled) setBalanceCheck(null);
+      } finally {
+        if (!cancelled) setBalanceLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey, imagePayload]);
+
+  const insufficientBalance =
+    balanceCheck !== null && !balanceCheck.sufficient && !balanceLoading;
+
   const stageLabel: Record<typeof stage, string> = {
     idle: publicKey ? "Send gift" : "Connect Phantom",
     storage: "Approve storage payment in Phantom…",
@@ -164,6 +209,10 @@ export default function GiftPage() {
       try { await connect(); } catch (err) {
         setError(err instanceof Error ? err.message : "Could not connect Phantom.");
       }
+      return;
+    }
+    if (insufficientBalance && balanceCheck?.message) {
+      setError(balanceCheck.message);
       return;
     }
 
@@ -366,7 +415,7 @@ export default function GiftPage() {
             previewUrlRef.current = null;
             setResult(null); setFile(null); setImagePayload(null); setPreview(null);
             setName(GIFT_NAME); setRecipient(""); setMintToSelf(false); setNote("");
-            setFees(null); setError(null); setStage("idle");
+            setFees(null); setBalanceCheck(null); setError(null); setStage("idle");
           }}
           className="text-sm text-white/40 hover:text-white/70"
         >
@@ -523,9 +572,46 @@ export default function GiftPage() {
             </div>
           )}
 
+          {publicKey && imagePayload && (
+            <div
+              className={`rounded border px-4 py-3 text-xs ${
+                balanceLoading
+                  ? "border-white/10 bg-white/5 text-white/50"
+                  : insufficientBalance
+                    ? "border-amber-500/50 bg-amber-500/10 text-amber-100"
+                    : balanceCheck
+                      ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-100/80"
+                      : "border-white/10 bg-white/5 text-white/50"
+              }`}
+            >
+              {balanceLoading && <p>Checking wallet balance…</p>}
+              {!balanceLoading && balanceCheck && (
+                <>
+                  <p className="font-medium">
+                    {insufficientBalance ? "⚠️ Not enough SOL in your wallet" : "✓ Wallet balance looks OK"}
+                  </p>
+                  <p className="mt-1 opacity-90">
+                    Balance: {fmtSol(balanceCheck.balanceSol)} SOL · Need: {fmtSol(balanceCheck.requiredSol)} SOL
+                    {insufficientBalance && (
+                      <> · Short: {fmtSol(balanceCheck.shortfallSol)} SOL</>
+                    )}
+                  </p>
+                  {insufficientBalance && balanceCheck.message && (
+                    <p className="mt-2 leading-relaxed opacity-90">{balanceCheck.message}</p>
+                  )}
+                  {!insufficientBalance && (
+                    <p className="mt-1 opacity-75">
+                      Storage (~{fmtSol(balanceCheck.storageSol)} SOL) is charged first; keep ~{fmtSol(balanceCheck.mintSol)} SOL for the mint step.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || insufficientBalance || balanceLoading}
             className="w-full rounded bg-primary py-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
           >
             {busy ? stageLabel[stage] : stageLabel.idle}

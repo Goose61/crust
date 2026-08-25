@@ -40,6 +40,11 @@ import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
 import { getGiftCollectionMint } from "./gift-collection";
 import { getPlatformSecretKey } from "./platform-key";
 import { GIFT_ON_CHAIN_SYMBOL } from "./gift-metadata";
+import {
+  formatInsufficientBalanceMessage,
+  getMintStepMinLamports,
+  lamportsToSol,
+} from "./gift-fees";
 import type { PendingMint } from "./types";
 
 export type BuildTxResult = {
@@ -212,6 +217,35 @@ async function serverRpcCall<T>(
   return json.result as T;
 }
 
+async function fetchWalletBalanceLamports(
+  rpcUrl: string,
+  wallet: string,
+): Promise<bigint> {
+  const result = await serverRpcCall<{ value: number }>(rpcUrl, "getBalance", [
+    wallet,
+    { commitment: "confirmed" },
+  ]);
+  return BigInt(result?.value ?? 0);
+}
+
+async function assertPayerCanAffordMintStep(params: {
+  payer: string;
+  network: SolanaNetwork;
+}): Promise<void> {
+  const rpcUrl = getDirectRpcUrl(params.network);
+  const balanceLamports = await fetchWalletBalanceLamports(rpcUrl, params.payer);
+  const requiredLamports = getMintStepMinLamports();
+  if (balanceLamports >= requiredLamports) return;
+
+  throw new Error(
+    formatInsufficientBalanceMessage({
+      balanceSol: lamportsToSol(balanceLamports),
+      requiredSol: lamportsToSol(requiredLamports),
+      mintOnly: true,
+    }),
+  );
+}
+
 /**
  * Simulate an unsigned tx before Phantom signing (Phantom docs: sigVerify false).
  */
@@ -227,7 +261,19 @@ const TM_ERROR_NAMES: Record<number, string> = {
   82: "CollectionMustBeAUniqueMasterEdition",
 };
 
-function describeSimulationError(err: unknown): string {
+function describeSimulationError(err: unknown, logs?: string[] | null): string {
+  const logText = logs?.join("\n") ?? "";
+  const insufficient = logText.match(/insufficient lamports (\d+), need (\d+)/i);
+  if (insufficient) {
+    const have = Number(insufficient[1]) / 1e9;
+    const need = Number(insufficient[2]) / 1e9;
+    return (
+      `Not enough SOL in your wallet for the mint step. ` +
+      `You have ~${have.toFixed(4)} SOL but need ~${need.toFixed(4)} SOL for account rent ` +
+      `(plus tx fees). Arweave storage is charged separately first — keep ~0.02 SOL remaining for the mint.`
+    );
+  }
+
   const raw = JSON.stringify(err);
   const custom = raw.match(/"Custom":(\d+)/);
   if (custom) {
@@ -256,9 +302,8 @@ export async function simulateUnsignedTransaction(
   );
   const err = result?.value?.err;
   if (err) {
-    const logs = result?.value?.logs?.slice(-5).join("\n");
-    const base = describeSimulationError(err);
-    throw new Error(logs ? `${base}\nLogs:\n${logs}` : base);
+    const logs = result?.value?.logs ?? null;
+    throw new Error(describeSimulationError(err, logs));
   }
 }
 
@@ -293,6 +338,7 @@ export async function prepareGiftTransactionForSigning(params: {
     throw new Error("Mint address mismatch when refreshing transaction.");
   }
 
+  await assertPayerCanAffordMintStep({ payer: params.payer, network });
   await simulateUnsignedTransaction(txBase64, network);
 
   return { txBase64, assetAddress };

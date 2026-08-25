@@ -88,7 +88,12 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[POST /api/gift/prepare-sign]", err);
     const message = err instanceof Error ? err.message : "Prepare sign failed";
-    const status = message.includes("would fail") ? 400 : 500;
+    const status =
+      message.includes("would fail") ||
+      message.includes("Not enough SOL") ||
+      message.includes("does not have enough SOL")
+        ? 400
+        : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
