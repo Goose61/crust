@@ -24,13 +24,22 @@ import {
   publicKey as umiPublicKey,
   percentAmount,
   transactionBuilder,
+  some,
 } from "@metaplex-foundation/umi";
-import { createV1, mintV1, TokenStandard } from "@metaplex-foundation/mpl-token-metadata";
+import {
+  createV1,
+  mintV1,
+  verifyCollectionV1,
+  findMetadataPda,
+  TokenStandard,
+} from "@metaplex-foundation/mpl-token-metadata";
 import { base64 } from "@metaplex-foundation/umi/serializers";
 import { Keypair, VersionedTransaction } from "@solana/web3.js";
 import { getDirectRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
 import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
-import { GIFT_SYMBOL } from "./gift-metadata";
+import { getGiftCollectionMint } from "./gift-collection";
+import { getPlatformSecretKey } from "./platform-key";
+import { GIFT_ON_CHAIN_SYMBOL } from "./gift-metadata";
 import type { PendingMint } from "./types";
 
 export type BuildTxResult = {
@@ -70,60 +79,16 @@ export function isValidSolanaAddress(addr: string): boolean {
   }
 }
 
-function getPlatformSecretKey(): Uint8Array | null {
-  const rawKey = process.env.ARWEAVE_SOLANA_KEY;
-  if (!rawKey) return null;
-  return parseSecretKey(rawKey);
-}
-
-/** Decode platform secret key — supports base58 string or JSON byte array. */
-function parseSecretKey(raw: string): Uint8Array {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("[")) {
-    const arr = JSON.parse(trimmed) as number[];
-    if (!Array.isArray(arr) || arr.length !== 64) {
-      throw new Error(`ARWEAVE_SOLANA_KEY JSON array must be 64 bytes; got ${arr?.length ?? 0}.`);
-    }
-    return new Uint8Array(arr);
-  }
-  const decoded = decodeBase58(trimmed);
-  if (decoded.length !== 64) {
-    throw new Error(
-      `ARWEAVE_SOLANA_KEY decoded to ${decoded.length} bytes; expected 64.`,
-    );
-  }
-  return decoded;
-}
-
-/** Decode a base58 string to a Uint8Array (no external dependency). */
-function decodeBase58(b58: string): Uint8Array {
-  const ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  const bytes: number[] = [0];
-  for (const char of b58) {
-    const idx = ALPHA.indexOf(char);
-    if (idx < 0) throw new Error(`Invalid base58 character: "${char}"`);
-    let carry = idx;
-    for (let i = 0; i < bytes.length; i++) {
-      carry += bytes[i] * 58;
-      bytes[i] = carry & 0xff;
-      carry >>= 8;
-    }
-    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
-  }
-  for (let i = 0; b58[i] === "1"; i++) bytes.push(0);
-  return new Uint8Array(bytes.reverse());
-}
-
-function secretKeyToB64(secretKey: Uint8Array): string {
-  return Buffer.from(secretKey).toString("base64");
-}
-
 function secretKeyFromB64(b64: string): Uint8Array {
   const bytes = Buffer.from(b64, "base64");
   if (bytes.length !== 64) {
     throw new Error(`Invalid pending mint secret key length: ${bytes.length}`);
   }
   return new Uint8Array(bytes);
+}
+
+function secretKeyToB64(secretKey: Uint8Array): string {
+  return Buffer.from(secretKey).toString("base64");
 }
 
 async function buildUnsignedGiftTx(params: {
@@ -133,6 +98,7 @@ async function buildUnsignedGiftTx(params: {
   payer: string;
   network: SolanaNetwork;
   mintSecretKey?: Uint8Array;
+  tmCollectionMint?: string | null;
 }): Promise<{ txBase64: string; assetAddress: string; mintSecretKey: Uint8Array }> {
   const platformSecret = getPlatformSecretKey();
   if (!platformSecret) throw new Error("Server mint key not configured.");
@@ -153,38 +119,62 @@ async function buildUnsignedGiftTx(params: {
 
   const payerNoop = createNoopSigner(umiPublicKey(params.payer));
   const blockhash = await fetchLatestBlockhash(rpcUrl);
+  const tmCollectionMint = params.tmCollectionMint?.trim() || null;
 
-  const tx = await transactionBuilder()
-    .add(
-      createV1(umi, {
-        mint: mintSigner,
-        authority: mintSigner,
-        name: params.name,
-        symbol: GIFT_SYMBOL,
-        uri: params.metadataUri,
-        sellerFeeBasisPoints: percentAmount(0),
-        updateAuthority,
-        payer: payerNoop,
-        creators: [
-          {
-            address: updateAuthority.publicKey,
-            verified: true,
-            share: 100,
-          },
-        ],
-      }),
-    )
-    .add(
-      mintV1(umi, {
-        mint: mintSigner.publicKey,
-        // NonFungible mints require metadata update authority, not mint authority.
+  let builder = transactionBuilder().add(
+    createV1(umi, {
+      mint: mintSigner,
+      authority: mintSigner,
+      name: params.name,
+      symbol: GIFT_ON_CHAIN_SYMBOL,
+      uri: params.metadataUri,
+      sellerFeeBasisPoints: percentAmount(0),
+      tokenStandard: TokenStandard.NonFungible,
+      updateAuthority,
+      payer: payerNoop,
+      ...(tmCollectionMint
+        ? {
+            collection: some({
+              key: umiPublicKey(tmCollectionMint),
+              verified: false,
+            }),
+          }
+        : {}),
+      creators: [
+        {
+          address: updateAuthority.publicKey,
+          // Verified after platform co-signs; true here breaks unsigned simulation.
+          verified: false,
+          share: 100,
+        },
+      ],
+    }),
+  );
+
+  builder = builder.add(
+    mintV1(umi, {
+      mint: mintSigner.publicKey,
+      // NonFungible mints require metadata update authority, not mint authority.
+      authority: updateAuthority,
+      tokenOwner: umiPublicKey(params.recipient),
+      tokenStandard: TokenStandard.NonFungible,
+      amount: 1,
+      payer: payerNoop,
+    }),
+  );
+
+  if (tmCollectionMint) {
+    const metadata = findMetadataPda(umi, { mint: mintSigner.publicKey });
+    builder = builder.add(
+      verifyCollectionV1(umi, {
         authority: updateAuthority,
-        tokenOwner: umiPublicKey(params.recipient),
-        tokenStandard: TokenStandard.NonFungible,
-        amount: 1,
-        payer: payerNoop,
+        metadata,
+        collectionMint: umiPublicKey(tmCollectionMint),
       }),
-    )
+    );
+  }
+
+  const tx = await builder
     .useV0()
     .setFeePayer(payerNoop)
     .setBlockhash(blockhash)
@@ -225,13 +215,40 @@ async function serverRpcCall<T>(
 /**
  * Simulate an unsigned tx before Phantom signing (Phantom docs: sigVerify false).
  */
+const TM_ERROR_NAMES: Record<number, string> = {
+  0: "InstructionUnpackError",
+  1: "InstructionPackError",
+  2: "NotRentExempt",
+  7: "UpdateAuthorityIncorrect",
+  11: "NameTooLong",
+  12: "SymbolTooLong",
+  13: "UriTooLong",
+  80: "CollectionNotFound",
+  82: "CollectionMustBeAUniqueMasterEdition",
+};
+
+function describeSimulationError(err: unknown): string {
+  const raw = JSON.stringify(err);
+  const custom = raw.match(/"Custom":(\d+)/);
+  if (custom) {
+    const code = Number(custom[1]);
+    const name = TM_ERROR_NAMES[code];
+    if (name) {
+      return `Transaction would fail on-chain (${name} / Custom:${code}): ${raw}`;
+    }
+  }
+  return `Transaction would fail on-chain: ${raw}`;
+}
+
 export async function simulateUnsignedTransaction(
   txBase64: string,
   network?: SolanaNetwork,
 ): Promise<void> {
   const net = network ?? getSolanaNetwork();
   const rpcUrl = getDirectRpcUrl(net);
-  const result = await serverRpcCall<{ value?: { err?: unknown } }>(
+  const result = await serverRpcCall<{
+    value?: { err?: unknown; logs?: string[] | null };
+  }>(
     rpcUrl,
     "simulateTransaction",
     [txBase64, { encoding: "base64", sigVerify: false, commitment: "confirmed" }],
@@ -239,7 +256,9 @@ export async function simulateUnsignedTransaction(
   );
   const err = result?.value?.err;
   if (err) {
-    throw new Error(`Transaction would fail on-chain: ${JSON.stringify(err)}`);
+    const logs = result?.value?.logs?.slice(-5).join("\n");
+    const base = describeSimulationError(err);
+    throw new Error(logs ? `${base}\nLogs:\n${logs}` : base);
   }
 }
 
@@ -257,6 +276,8 @@ export async function prepareGiftTransactionForSigning(params: {
 
   const network = params.network ?? getSolanaNetwork();
   const mintSecret = secretKeyFromB64(params.pendingMint.assetSecretKeyB64);
+  const tmCollectionMint =
+    params.pendingMint.tmCollectionMint ?? getGiftCollectionMint(network);
 
   const { txBase64, assetAddress } = await buildUnsignedGiftTx({
     name: params.pendingMint.name,
@@ -265,6 +286,7 @@ export async function prepareGiftTransactionForSigning(params: {
     payer: params.pendingMint.payer,
     network,
     mintSecretKey: mintSecret,
+    tmCollectionMint,
   });
 
   if (assetAddress !== params.pendingMint.assetAddress) {
@@ -290,12 +312,14 @@ export async function buildGiftTransaction(params: {
   if (!getPlatformSecretKey()) return null;
 
   const network = params.network ?? getSolanaNetwork();
+  const tmCollectionMint = getGiftCollectionMint(network);
   const { txBase64, assetAddress, mintSecretKey } = await buildUnsignedGiftTx({
     name: params.name,
     metadataUri: params.metadataUri,
     recipient: params.recipient,
     payer: params.payer,
     network,
+    tmCollectionMint,
   });
 
   return {
@@ -308,6 +332,7 @@ export async function buildGiftTransaction(params: {
       metadataUri: params.metadataUri,
       recipient: params.recipient,
       payer: params.payer,
+      ...(tmCollectionMint ? { tmCollectionMint } : {}),
     },
   };
 }

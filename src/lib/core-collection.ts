@@ -1,9 +1,8 @@
 /**
- * Metaplex Core Collection helpers for verified gift mints.
+ * Legacy Metaplex Core Collection helpers (pre–Token Metadata gift mints).
  *
- * Gifts minted into an on-chain Core Collection are grouped under one brand in
- * wallets/explorers (Phantom Certified Collections pattern for Token Metadata;
- * Core uses native collection membership at create time).
+ * New gift mints use Token Metadata + `gift-collection.ts` (`GIFT_TM_COLLECTION_MINT`).
+ * This module remains for old Core assets and the Core setup script.
  *
  * @see https://www.metaplex.com/docs/smart-contracts/core/collections
  * @see https://www.metaplex.com/docs/smart-contracts/core/create-asset

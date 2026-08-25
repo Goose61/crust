@@ -48,8 +48,9 @@ type ImagePayload = {
 };
 
 type GiftConfig = {
-  coreCollectionAddress: string | null;
-  coreCollectionName: string;
+  platformCreatorAddress: string | null;
+  giftCollectionMint: string | null;
+  giftCollectionName: string;
 };
 
 export default function GiftPage() {
@@ -192,9 +193,11 @@ export default function GiftPage() {
             note: note || undefined,
             imageUri: uri,
             imageContentType: imageInfo.contentType,
-            creatorAddress: publicKey,
-            coreCollectionAddress: giftConfig?.coreCollectionAddress,
-            coreCollectionName: giftConfig?.coreCollectionName,
+            platformCreatorAddress:
+              giftConfig?.platformCreatorAddress ?? publicKey,
+            giftedByAddress: publicKey,
+            collectionName: giftConfig?.giftCollectionName,
+            collectionMint: giftConfig?.giftCollectionMint,
             externalUrl:
               typeof window !== "undefined"
                 ? `${window.location.origin}/gift`

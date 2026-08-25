@@ -134,8 +134,8 @@ export type PendingMint = {
   metadataUri: string;
   recipient: string;
   payer: string;
-  /** When set, mint is into a Metaplex Core Collection (collection authority must co-sign). */
-  coreCollectionAddress?: string;
+  /** When set, mint includes verifyCollectionV1 for Phantom grouping. */
+  tmCollectionMint?: string;
 };
 
 export type CollectionSocials = {

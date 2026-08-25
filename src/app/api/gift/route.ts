@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
   const token: GeneratedToken = {
     tokenId: 1,
     dna: "gift",
-    attributes: buildGiftAttributes(note),
+    attributes: buildGiftAttributes(note, payer),
     imageRelPath: `images/1${safeExt}`,
     metadataRelPath: "metadata/1.json",
     imageUri,
