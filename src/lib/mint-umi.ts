@@ -5,7 +5,8 @@
  * pull in @solana/web3.js Connection → rpc-websockets → uuid (ESM-only) and
  * crash Vercel serverless with ERR_REQUIRE_ESM.
  *
- * Blockhash is fetched via plain HTTP; only eddsa + tx factory use web3.js types.
+ * Blockhash is fetched via plain HTTP; Token Metadata needs a stub RPC for
+ * getCluster() during PDA / program resolution.
  */
 
 import { createBaseUmi, type Umi } from "@metaplex-foundation/umi";
@@ -15,8 +16,10 @@ import { web3JsEddsa } from "@metaplex-foundation/umi-eddsa-web3js";
 import { web3JsTransactionFactory } from "@metaplex-foundation/umi-transaction-factory-web3js";
 import { mplTokenMetadata } from "@metaplex-foundation/mpl-token-metadata";
 import { mplToolbox } from "@metaplex-foundation/mpl-toolbox";
+import { attachMinimalFetchRpc } from "./minimal-fetch-rpc";
+import { getDirectRpcUrl, type SolanaNetwork } from "./solana-config";
 
-export function createMintUmi(): Umi {
+export function createMintUmi(network: SolanaNetwork): Umi {
   const umi = createBaseUmi();
   umi.use(dataViewSerializer());
   umi.use(defaultProgramRepository());
@@ -24,6 +27,7 @@ export function createMintUmi(): Umi {
   umi.use(web3JsTransactionFactory());
   umi.use(mplTokenMetadata());
   umi.use(mplToolbox());
+  attachMinimalFetchRpc(umi, getDirectRpcUrl(network), network);
   return umi;
 }
 

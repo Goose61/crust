@@ -137,7 +137,7 @@ async function buildUnsignedGiftTx(params: {
   if (!platformSecret) throw new Error("Server mint key not configured.");
 
   const rpcUrl = getDirectRpcUrl(params.network);
-  const umi = createMintUmi();
+  const umi = createMintUmi(params.network);
 
   const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(platformSecret);
   const updateAuthority = createSignerFromKeypair(umi, authorityKeypair);

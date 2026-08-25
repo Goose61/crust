@@ -12,15 +12,11 @@
  */
 
 import {
-  lamports,
-  publicKey as umiPublicKey,
   type Context,
-  type MaybeRpcAccount,
-  type PublicKey,
-  type RpcInterface,
   type Umi,
 } from "@metaplex-foundation/umi";
 import { fetchCollection, type CollectionV1 } from "@metaplex-foundation/mpl-core";
+import { attachMinimalFetchRpc } from "./minimal-fetch-rpc";
 import { getDirectRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
 
 const collectionCache = new Map<string, CollectionV1>();
@@ -38,68 +34,8 @@ function cacheKey(network: SolanaNetwork, address: string): string {
 }
 
 /**
- * Minimal fetch-based RPC for `fetchCollection` only (avoids umi-bundle-defaults ESM issues on Vercel).
- * @see https://www.metaplex.com/docs/smart-contracts/core/fetch
+ * Fetch and cache a Core Collection account for mint-into-collection txs.
  */
-export function attachMinimalFetchRpc(umi: Umi, rpcUrl: string): void {
-  const stub = createMinimalFetchRpc(rpcUrl);
-  umi.rpc = stub as RpcInterface;
-}
-
-function createMinimalFetchRpc(
-  rpcUrl: string,
-): Pick<RpcInterface, "getEndpoint" | "getCluster" | "getAccount" | "getAccounts"> {
-  async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
-    const res = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) throw new Error(`RPC HTTP ${res.status} (${method})`);
-    const text = await res.text();
-    if (!text.trim()) throw new Error(`RPC empty body (${method})`);
-    const json = JSON.parse(text) as { result?: T; error?: { message: string } };
-    if (json.error) throw new Error(json.error.message);
-    return json.result as T;
-  }
-
-  return {
-    getEndpoint: () => rpcUrl,
-    getCluster: () => "devnet",
-    async getAccount(pubkey: PublicKey, options): Promise<MaybeRpcAccount> {
-      type AccountInfo = {
-        lamports: number;
-        owner: string;
-        executable: boolean;
-        rentEpoch?: number;
-        data: [string, string];
-      };
-      const result = await rpcCall<{ value: AccountInfo | null }>("getAccountInfo", [
-        pubkey.toString(),
-        { encoding: "base64", commitment: options?.commitment ?? "confirmed" },
-      ]);
-      const value = result?.value;
-      if (!value) {
-        return { exists: false, publicKey: pubkey };
-      }
-      return {
-        exists: true,
-        publicKey: pubkey,
-        lamports: lamports(value.lamports ?? 0),
-        owner: umiPublicKey(value.owner),
-        executable: value.executable ?? false,
-        ...(value.rentEpoch != null ? { rentEpoch: BigInt(value.rentEpoch) } : {}),
-        data: Buffer.from(value.data[0], "base64"),
-      };
-    },
-    async getAccounts(pubkeys: PublicKey[], options): Promise<MaybeRpcAccount[]> {
-      return Promise.all(pubkeys.map((pk) => this.getAccount(pk, options)));
-    },
-  };
-}
-
-/** Fetch and cache a Core Collection account for mint-into-collection txs. */
 export async function fetchCoreCollection(
   umi: Context,
   address: string,
@@ -111,7 +47,7 @@ export async function fetchCoreCollection(
   if (cached) return cached;
 
   const rpcUrl = getDirectRpcUrl(net);
-  attachMinimalFetchRpc(umi as Umi, rpcUrl);
+  attachMinimalFetchRpc(umi as Umi, rpcUrl, net);
   let collection: CollectionV1;
   try {
     collection = await fetchCollection(umi, address);
