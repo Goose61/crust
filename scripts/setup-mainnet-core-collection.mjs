@@ -27,9 +27,9 @@ import { Keypair } from "@solana/web3.js";
 
 const ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const MIN_BALANCE_LAMPORTS = 15_000_000; // ~0.015 SOL buffer
-const COLLECTION_NAME = "Dough Boi Gifts";
+const COLLECTION_NAME = "Dough Boi";
 const COLLECTION_DESCRIPTION =
-  "1/1 gift NFTs from the Dough Boi marketplace. Minted on Solana via Metaplex Core.";
+  "1/1 $PIZZA collectibles from Dough Boi. Minted on Solana via Metaplex Core.";
 
 function b58decode(s) {
   const bytes = [];
@@ -165,7 +165,7 @@ const metadata = {
   name: COLLECTION_NAME,
   description: COLLECTION_DESCRIPTION,
   image: imageUri,
-  external_url: "https://crust.vercel.app/gift",
+  external_url: "https://www.thecrust.io",
   seller_fee_basis_points: 0,
   properties: {
     category: "image",

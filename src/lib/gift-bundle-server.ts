@@ -15,7 +15,22 @@ import {
 export async function getOrCreateGiftBundle(): Promise<Collection> {
   const id = getGiftBundleId();
   const existing = await getCollection(id);
-  if (existing) return existing;
+  if (existing) {
+    let dirty = false;
+    if (/\bgifts?\b/i.test(existing.name)) {
+      existing.name = GIFT_COLLECTION_DISPLAY_NAME;
+      dirty = true;
+    }
+    if (/\bgifts?\b/i.test(existing.description)) {
+      existing.description = GIFT_DESCRIPTION;
+      dirty = true;
+    }
+    if (dirty) {
+      existing.updatedAt = new Date().toISOString();
+      await saveCollection(existing);
+    }
+    return existing;
+  }
 
   const now = new Date().toISOString();
   const bundle: Collection = {

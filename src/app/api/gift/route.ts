@@ -21,6 +21,7 @@ import {
   GIFT_NAME,
   buildGiftAttributes,
   giftMintName,
+  sanitizeForPhantomMetadata,
 } from "@/lib/gift-metadata";
 import { explorerClusterQuery, parseNetwork } from "@/lib/solana-config";
 import { verifyMintTransaction } from "@/lib/verify-mint";
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
     network?: string;
   };
 
-  const name = String(body.name || GIFT_NAME).trim() || GIFT_NAME;
+  const name = sanitizeForPhantomMetadata(String(body.name || GIFT_NAME).trim()) || GIFT_NAME;
   if (name.length > 32)
     return NextResponse.json({ error: "Name must be 32 characters or fewer" }, { status: 400 });
 

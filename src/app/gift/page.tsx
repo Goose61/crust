@@ -413,7 +413,7 @@ export default function GiftPage() {
             href={giftBundleHref(result.tokenId)}
             className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 hover:text-white"
           >
-            View in Dough Boi Gifts collection ↗
+            View in Dough Boi collection ↗
           </a>
         </div>
         <button

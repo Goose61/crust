@@ -55,7 +55,7 @@ export function giftDisplayNameFromToken(token: GeneratedToken): string {
   if (typeof note === "string" && note.trim()) {
     return note.trim().slice(0, 32);
   }
-  return `Gift #${token.tokenId}`;
+  return `Dough Boi #${token.tokenId}`;
 }
 
 export function giftBundleHref(tokenId?: number): string {

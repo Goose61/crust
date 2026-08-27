@@ -57,7 +57,7 @@ const now = new Date().toISOString();
 let bundle = existingBundle ?? {
   id: GIFT_BUNDLE_ID,
   slug: GIFT_BUNDLE_SLUG,
-  name: "Dough Boi Gifts",
+  name: "Dough Boi",
   symbol: "$PIZZA",
   description: "1/1 $PIZZA collectibles from Dough Boi. Minted on Solana.",
   nameTemplate: "{name}",

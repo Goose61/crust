@@ -1,6 +1,6 @@
 /**
- * Off-chain JSON for Metaplex Core gift mints.
- * Avoid words like "Gift" in metadata (Phantom spam filter).
+ * Off-chain JSON for Metaplex Core mints.
+ * Avoid words like "Gift" in names/JSON (Phantom spam filter).
  */
 
 export const GIFT_SYMBOL = "$PIZZA";
@@ -12,11 +12,19 @@ export const GIFT_EXTERNAL_URL = "https://www.thecrust.io";
 export const GIFT_DESCRIPTION =
   "A 1/1 $PIZZA collectible from Dough Boi. Minted on Solana.";
 
-export const GIFT_COLLECTION_DISPLAY_NAME = "Dough Boi Gifts";
+/** App / bundle display label — not written into Arweave JSON. */
+export const GIFT_COLLECTION_DISPLAY_NAME = "Dough Boi";
 
-/** Metaplex Core on-chain name (keep short). */
+const SPAM_WORDS = /\b(gifts?|airdrop|free|claim|winner)\b/gi;
+
+/** Strip Phantom spam keywords from text used in on-chain names or Arweave JSON. */
+export function sanitizeForPhantomMetadata(text: string): string {
+  return text.replace(SPAM_WORDS, "").replace(/\s+/g, " ").trim();
+}
+
+/** Metaplex Core on-chain name (32-byte limit). */
 export function giftMintName(displayName: string): string {
-  const base = displayName.trim() || GIFT_NAME;
+  const base = sanitizeForPhantomMetadata(displayName.trim()) || GIFT_NAME;
   const full = `${base} #1`;
   const bytes = new TextEncoder().encode(full);
   if (bytes.length <= 32) return full;
@@ -28,7 +36,7 @@ export function giftMintName(displayName: string): string {
 }
 
 export function giftDescription(note?: string): string {
-  const trimmed = note?.trim();
+  const trimmed = sanitizeForPhantomMetadata(note?.trim() ?? "");
   return trimmed || GIFT_DESCRIPTION;
 }
 
@@ -72,8 +80,9 @@ export function buildGiftMetadataJson(params: GiftMetadataParams): string {
 }
 
 export function buildGiftAttributes(note?: string, payer?: string) {
+  const safeNote = note?.trim() ? sanitizeForPhantomMetadata(note.trim()) : "";
   return [
-    ...(note?.trim() ? [{ trait_type: "Note", value: note.trim() }] : []),
+    ...(safeNote ? [{ trait_type: "Note", value: safeNote }] : []),
     ...(payer?.trim() ? [{ trait_type: "From", value: payer.trim() }] : []),
     { trait_type: "Type", value: "Dough Boi" },
     { trait_type: "Edition", value: "1/1" },
