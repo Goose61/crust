@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getGiftCollectionMint, getGiftCollectionName } from "@/lib/gift-collection";
+import { getCoreCollectionAddress } from "@/lib/core-collection";
+import { getGiftBundleId } from "@/lib/gift-bundle";
 import {
   GIFT_COLLECTION_DISPLAY_NAME,
   GIFT_EXTERNAL_URL,
@@ -11,21 +12,20 @@ import { getSolanaNetwork } from "@/lib/solana-config";
 
 export const runtime = "nodejs";
 
-/** Public gift-mint config (platform creator, TM collection, metadata defaults). */
+/** Public gift-mint config (platform creator, Core collection, metadata defaults). */
 export async function GET() {
   const network = getSolanaNetwork();
   const platformCreatorAddress = getPlatformPublicKey();
-  const giftCollectionMint = getGiftCollectionMint(network);
-  const giftCollectionName = getGiftCollectionName();
+  const coreCollectionAddress = getCoreCollectionAddress(network);
 
   return NextResponse.json({
     network,
     platformCreatorAddress,
-    giftCollectionMint,
-    giftCollectionName,
+    coreCollectionAddress,
+    giftBundleCollectionId: getGiftBundleId(),
+    giftCollectionName: GIFT_COLLECTION_DISPLAY_NAME,
     giftSymbol: GIFT_SYMBOL,
     giftName: GIFT_NAME,
     giftExternalUrl: GIFT_EXTERNAL_URL,
-    giftCollectionDisplayName: GIFT_COLLECTION_DISPLAY_NAME,
   });
 }

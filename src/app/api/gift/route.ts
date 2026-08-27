@@ -1,21 +1,25 @@
 /**
- * POST /api/gift  — build mint tx from client-uploaded Arweave URIs
+ * POST /api/gift  — build Core mint tx from client-uploaded Arweave URIs
  * PATCH /api/gift — confirm on-chain mint after wallet signature
  *
- * Storage uploads happen client-side (minter pays via Irys).
- * This route only builds the Token Metadata mint transaction and persists records.
+ * Each gift appends a token to the shared gift bundle collection (Market UI).
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { newId, saveCollection, slugify, getCollection } from "@/lib/store";
+import { saveCollection, getCollection } from "@/lib/store";
 import { rateLimit } from "@/lib/rate-limit";
-import { defaultPayments, type Collection, type GeneratedToken } from "@/lib/types";
+import { type GeneratedToken } from "@/lib/types";
 import { buildGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
 import {
+  appendGiftToken,
+  findGiftToken,
+  giftDisplayNameFromToken,
+  syncGiftBundleCounts,
+} from "@/lib/gift-bundle";
+import { getOrCreateGiftBundle } from "@/lib/gift-bundle-server";
+import {
   GIFT_NAME,
-  GIFT_SYMBOL,
   buildGiftAttributes,
-  giftDescription,
   giftMintName,
 } from "@/lib/gift-metadata";
 import { explorerClusterQuery, parseNetwork } from "@/lib/solana-config";
@@ -50,7 +54,6 @@ export async function POST(req: NextRequest) {
   const note = String(body.note || "").slice(0, 200);
   const imageUri = String(body.imageUri || "").trim();
   const metadataUri = String(body.metadataUri || "").trim();
-  const contentType = String(body.contentType || "image/png");
   const safeExt = String(body.imageExt || ".png");
   const network = parseNetwork(body.network);
 
@@ -63,11 +66,11 @@ export async function POST(req: NextRequest) {
   if (!metadataUri.startsWith("http") && !metadataUri.startsWith("/api/"))
     return NextResponse.json({ error: "Metadata must be uploaded to Arweave first" }, { status: 400 });
 
-  const id = newId();
   const nftName = giftMintName(name);
 
   let txBase64: string | null = null;
   let assetAddress: string | null = null;
+  let pendingMint = undefined;
 
   const txResult = await buildGiftTransaction({
     name: nftName,
@@ -80,69 +83,34 @@ export async function POST(req: NextRequest) {
   if (txResult) {
     txBase64 = txResult.txBase64;
     assetAddress = txResult.assetAddress;
+    pendingMint = txResult.pendingMint;
   }
 
-  const pendingMint = txResult?.pendingMint;
-
-  const token: GeneratedToken = {
-    tokenId: 1,
+  const tokenInput: Omit<GeneratedToken, "tokenId"> = {
     dna: "gift",
     attributes: buildGiftAttributes(note, payer),
-    imageRelPath: `images/1${safeExt}`,
-    metadataRelPath: "metadata/1.json",
+    imageRelPath: `images/gift-${Date.now()}${safeExt}`,
+    metadataRelPath: `metadata/gift-${Date.now()}.json`,
     imageUri,
     metadataUri,
     owner: recipient,
     ...(assetAddress ? { assetAddress } : {}),
   };
 
-  const collection: Collection = {
-    id,
-    slug: slugify(name),
-    name,
-    symbol: GIFT_SYMBOL,
-    description: giftDescription(note),
-    nameTemplate: "{name} #{id}",
-    chain: "solana",
-    status: txBase64 ? "draft" : "sold_out",
-    supply: 1,
-    mintedCount: txBase64 ? 0 : 1,
-    artPath: "path-a",
-    stackOrder: [],
-    layers: [],
-    blindMint: false,
-    revealTrigger: "manual",
-    revealed: true,
-    milestones: [],
-    payments: defaultPayments({
-      basePriceUsd: 0,
-      giftMintEnabled: true,
-      creatorWallet: payer,
-      acceptPizza: false,
-    }),
-    fees: {
-      ownerPercent: 97,
-      holdersPercent: 1,
-      buybackPercent: 1,
-      platformPercent: 1,
-      locked: true,
-    },
-    allowlist: [],
-    waitlist: [],
-    publicMintOpen: false,
-    secondaryEnabled: false,
-    holderPageUnlocked: false,
-    irysPublished: imageUri.includes("gateway.irys.xyz"),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    tokens: [token],
-    ...(pendingMint ? { pendingMint } : {}),
-  };
+  let bundle = await getOrCreateGiftBundle();
+  const { bundle: nextBundle, tokenId } = appendGiftToken(bundle, tokenInput);
+  bundle = nextBundle;
 
-  await saveCollection(collection);
+  if (pendingMint) {
+    bundle.pendingMint = { ...pendingMint, tokenId };
+  }
+
+  await saveCollection(bundle);
 
   return NextResponse.json({
-    collectionId: id,
+    collectionId: bundle.id,
+    tokenId,
+    displayName: giftDisplayNameFromToken(findGiftToken(bundle, tokenId)!),
     imageUri,
     metadataUri,
     storageMethod: "arweave",
@@ -154,36 +122,45 @@ export async function POST(req: NextRequest) {
       ? {}
       : {
           warning:
-            "Image saved to Arweave, but on-chain mint was skipped — set ARWEAVE_SOLANA_KEY on the server, then use “Mint on-chain now” on the collection page.",
+            "Image saved to Arweave, but on-chain mint was skipped — set ARWEAVE_SOLANA_KEY on the server.",
         }),
   });
 }
 
 export async function PATCH(req: NextRequest) {
-  const body = await req.json() as { collectionId?: string; txSignature?: string; network?: string };
+  const body = await req.json() as {
+    collectionId?: string;
+    tokenId?: number;
+    txSignature?: string;
+    network?: string;
+  };
   const { collectionId, txSignature } = body;
+  const tokenId = Number(body.tokenId);
   const network = parseNetwork(body.network);
 
   if (!collectionId || !txSignature)
     return NextResponse.json({ error: "collectionId and txSignature required" }, { status: 400 });
+  if (!Number.isFinite(tokenId) || tokenId < 1)
+    return NextResponse.json({ error: "tokenId required" }, { status: 400 });
 
   const collection = await getCollection(collectionId);
   if (!collection)
     return NextResponse.json({ error: "Collection not found" }, { status: 404 });
+
+  const token = findGiftToken(collection, tokenId);
+  if (!token)
+    return NextResponse.json({ error: "Gift token not found in bundle" }, { status: 404 });
 
   const verified = await verifyMintTransaction(txSignature, network);
   if (!verified.ok) {
     return NextResponse.json({ error: verified.reason }, { status: 400 });
   }
 
-  collection.status = "sold_out";
-  collection.mintedCount = 1;
+  token.mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery(network)}`;
   delete collection.pendingMint;
-  if (collection.tokens[0]) {
-    collection.tokens[0].mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery(network)}`;
-  }
+  syncGiftBundleCounts(collection);
   collection.updatedAt = new Date().toISOString();
 
   await saveCollection(collection);
-  return NextResponse.json({ ok: true, collection });
+  return NextResponse.json({ ok: true, collection, tokenId });
 }

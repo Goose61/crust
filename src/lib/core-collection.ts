@@ -1,13 +1,7 @@
 /**
- * Legacy Metaplex Core Collection helpers (pre–Token Metadata gift mints).
- *
- * New gift mints use Token Metadata + `gift-collection.ts` (`GIFT_TM_COLLECTION_MINT`).
- * This module remains for old Core assets and the Core setup script.
+ * Metaplex Core Collection helpers for gift mints.
  *
  * @see https://www.metaplex.com/docs/smart-contracts/core/collections
- * @see https://www.metaplex.com/docs/smart-contracts/core/create-asset
- * @see https://docs.phantom.com/best-practices/tokens/collectibles-nfts-and-semi-fungibles
- * @see https://www.metaplex.com/docs/smart-contracts/core/plugins/update-delegate
  */
 
 import {

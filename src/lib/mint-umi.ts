@@ -1,12 +1,5 @@
 /**
- * Minimal Umi setup for server-side mint tx building.
- *
- * Avoids @metaplex-foundation/umi-bundle-defaults and umi-rpc-web3js, which
- * pull in @solana/web3.js Connection → rpc-websockets → uuid (ESM-only) and
- * crash Vercel serverless with ERR_REQUIRE_ESM.
- *
- * Blockhash is fetched via plain HTTP; Token Metadata needs a stub RPC for
- * getCluster() during PDA / program resolution.
+ * Minimal Umi setup for server-side Core mint tx building.
  */
 
 import { createBaseUmi, type Umi } from "@metaplex-foundation/umi";
@@ -14,8 +7,7 @@ import { dataViewSerializer } from "@metaplex-foundation/umi-serializer-data-vie
 import { defaultProgramRepository } from "@metaplex-foundation/umi-program-repository";
 import { web3JsEddsa } from "@metaplex-foundation/umi-eddsa-web3js";
 import { web3JsTransactionFactory } from "@metaplex-foundation/umi-transaction-factory-web3js";
-import { mplTokenMetadata } from "@metaplex-foundation/mpl-token-metadata";
-import { mplToolbox } from "@metaplex-foundation/mpl-toolbox";
+import { mplCore } from "@metaplex-foundation/mpl-core";
 import { attachMinimalFetchRpc } from "./minimal-fetch-rpc";
 import { getDirectRpcUrl, type SolanaNetwork } from "./solana-config";
 
@@ -25,8 +17,7 @@ export function createMintUmi(network: SolanaNetwork): Umi {
   umi.use(defaultProgramRepository());
   umi.use(web3JsEddsa());
   umi.use(web3JsTransactionFactory());
-  umi.use(mplTokenMetadata());
-  umi.use(mplToolbox());
+  umi.use(mplCore());
   attachMinimalFetchRpc(umi, getDirectRpcUrl(network), network);
   return umi;
 }

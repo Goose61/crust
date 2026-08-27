@@ -1,19 +1,11 @@
 /**
- * Server-side Metaplex Token Metadata NFT transaction builder.
+ * Server-side Metaplex Core NFT transaction builder.
  *
- * Gift mints use standard Token Metadata NFTs (not Metaplex Core) so Phantom and
- * other wallets index them in the Collectibles tab.
+ * Gift mints use Metaplex Core (single create() into CORE_COLLECTION_ADDRESS)
+ * for reliable Phantom Collectibles grouping.
  *
- * @see https://www.metaplex.com/docs/smart-contracts/token-metadata/guides/javascript/create-an-nft
- * @see https://docs.phantom.com/best-practices/tokens/collectibles-nfts-and-semi-fungibles
- *
- * Phantom Lighthouse multi-signer order:
- *   1. Server builds UNSIGNED tx, stores mint keypair in pendingMint.
- *   2. prepare-sign: fresh blockhash + simulate (sigVerify: false).
- *   3. User signs via phantom.signTransaction (fee payer).
- *   4. Server co-signs (mint + update authority) and submits.
- *
- * If ARWEAVE_SOLANA_KEY is not set the builder returns null (demo mode).
+ * @see https://www.metaplex.com/docs/smart-contracts/core/collections
+ * @see https://www.metaplex.com/docs/smart-contracts/core/create-asset
  */
 
 import {
@@ -22,25 +14,14 @@ import {
   createNoopSigner,
   createSignerFromKeypair,
   publicKey as umiPublicKey,
-  percentAmount,
-  transactionBuilder,
-  some,
 } from "@metaplex-foundation/umi";
-import {
-  createV1,
-  mintV1,
-  verifyCollectionV1,
-  verifyCreatorV1,
-  findMetadataPda,
-  TokenStandard,
-} from "@metaplex-foundation/mpl-token-metadata";
+import { create } from "@metaplex-foundation/mpl-core";
 import { base64 } from "@metaplex-foundation/umi/serializers";
 import { Keypair, VersionedTransaction } from "@solana/web3.js";
 import { getDirectRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
 import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
-import { getGiftCollectionMint } from "./gift-collection";
+import { fetchCoreCollection, getCoreCollectionAddress } from "./core-collection";
 import { getPlatformSecretKey } from "./platform-key";
-import { GIFT_ON_CHAIN_SYMBOL } from "./gift-metadata";
 import {
   formatInsufficientBalanceMessage,
   getMintStepMinLamports,
@@ -49,10 +30,10 @@ import {
 import type { PendingMint } from "./types";
 
 export type BuildTxResult = {
-  /** Base64-encoded UNSIGNED versioned transaction for Phantom to sign first */
   txBase64: string;
   assetAddress: string;
   pendingMint: PendingMint;
+  coreCollectionAddress?: string;
 };
 
 export type PrepareSignResult = {
@@ -60,7 +41,6 @@ export type PrepareSignResult = {
   assetAddress: string;
 };
 
-/** Lightweight Solana address validator — no network call required. */
 export function isValidSolanaAddress(addr: string): boolean {
   if (!addr || addr.length < 32 || addr.length > 44) return false;
   if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(addr)) return false;
@@ -76,7 +56,10 @@ export function isValidSolanaAddress(addr: string): boolean {
         bytes[i] = carry & 0xff;
         carry >>= 8;
       }
-      while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
+      while (carry > 0) {
+        bytes.push(carry & 0xff);
+        carry >>= 8;
+      }
     }
     bytes.reverse();
     return bytes.length === 32;
@@ -88,7 +71,7 @@ export function isValidSolanaAddress(addr: string): boolean {
 function secretKeyFromB64(b64: string): Uint8Array {
   const bytes = Buffer.from(b64, "base64");
   if (bytes.length !== 64) {
-    throw new Error(`Invalid pending mint secret key length: ${bytes.length}`);
+    throw new Error(`Invalid pending asset secret key length: ${bytes.length}`);
   }
   return new Uint8Array(bytes);
 }
@@ -97,114 +80,6 @@ function secretKeyToB64(secretKey: Uint8Array): string {
   return Buffer.from(secretKey).toString("base64");
 }
 
-async function buildUnsignedGiftTx(params: {
-  name: string;
-  metadataUri: string;
-  recipient: string;
-  payer: string;
-  network: SolanaNetwork;
-  mintSecretKey?: Uint8Array;
-  tmCollectionMint?: string | null;
-}): Promise<{ txBase64: string; assetAddress: string; mintSecretKey: Uint8Array }> {
-  const platformSecret = getPlatformSecretKey();
-  if (!platformSecret) throw new Error("Server mint key not configured.");
-
-  const rpcUrl = getDirectRpcUrl(params.network);
-  const umi = createMintUmi(params.network);
-
-  const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(platformSecret);
-  const updateAuthority = createSignerFromKeypair(umi, authorityKeypair);
-  umi.use(keypairIdentity(authorityKeypair, false));
-
-  const mintSigner = params.mintSecretKey
-    ? createSignerFromKeypair(
-        umi,
-        umi.eddsa.createKeypairFromSecretKey(params.mintSecretKey),
-      )
-    : generateSigner(umi);
-
-  const payerNoop = createNoopSigner(umiPublicKey(params.payer));
-  const blockhash = await fetchLatestBlockhash(rpcUrl);
-  const tmCollectionMint = params.tmCollectionMint?.trim() || null;
-
-  let builder = transactionBuilder().add(
-    createV1(umi, {
-      mint: mintSigner,
-      authority: mintSigner,
-      name: params.name,
-      symbol: GIFT_ON_CHAIN_SYMBOL,
-      uri: params.metadataUri,
-      sellerFeeBasisPoints: percentAmount(0),
-      tokenStandard: TokenStandard.NonFungible,
-      updateAuthority,
-      payer: payerNoop,
-      ...(tmCollectionMint
-        ? {
-            collection: some({
-              key: umiPublicKey(tmCollectionMint),
-              verified: false,
-            }),
-          }
-        : {}),
-      creators: [
-        {
-          address: updateAuthority.publicKey,
-          verified: false,
-          share: 100,
-        },
-      ],
-    }),
-  );
-
-  builder = builder.add(
-    mintV1(umi, {
-      mint: mintSigner.publicKey,
-      // NonFungible mints require metadata update authority, not mint authority.
-      authority: updateAuthority,
-      tokenOwner: umiPublicKey(params.recipient),
-      tokenStandard: TokenStandard.NonFungible,
-      amount: 1,
-      payer: payerNoop,
-    }),
-  );
-
-  const metadata = findMetadataPda(umi, { mint: mintSigner.publicKey });
-
-  if (tmCollectionMint) {
-    builder = builder.add(
-      verifyCollectionV1(umi, {
-        authority: updateAuthority,
-        metadata,
-        collectionMint: umiPublicKey(tmCollectionMint),
-      }),
-    );
-  }
-
-  // Platform co-signs so Phantom sees a verified creator (Collectibles indexing).
-  builder = builder.add(
-    verifyCreatorV1(umi, {
-      authority: updateAuthority,
-      metadata,
-    }),
-  );
-
-  const tx = await builder
-    .useV0()
-    .setFeePayer(payerNoop)
-    .setBlockhash(blockhash)
-    .build(umi);
-
-  const serialized = umi.transactions.serialize(tx);
-  const txBase64 = base64.deserialize(serialized)[0];
-  const assetAddress = mintSigner.publicKey.toString();
-
-  return { txBase64, assetAddress, mintSecretKey: mintSigner.secretKey };
-}
-
-/**
- * Simulate an unsigned tx before Phantom signing (Phantom docs: sigVerify false).
- * @see https://docs.phantom.com/solana/sending-a-transaction
- */
 async function serverRpcCall<T>(
   rpcUrl: string,
   method: string,
@@ -255,20 +130,71 @@ async function assertPayerCanAffordMintStep(params: {
   );
 }
 
-/**
- * Simulate an unsigned tx before Phantom signing (Phantom docs: sigVerify false).
- */
-const TM_ERROR_NAMES: Record<number, string> = {
-  0: "InstructionUnpackError",
-  1: "InstructionPackError",
-  2: "NotRentExempt",
-  7: "UpdateAuthorityIncorrect",
-  11: "NameTooLong",
-  12: "SymbolTooLong",
-  13: "UriTooLong",
-  80: "CollectionNotFound",
-  82: "CollectionMustBeAUniqueMasterEdition",
-};
+async function buildUnsignedGiftTx(params: {
+  name: string;
+  metadataUri: string;
+  recipient: string;
+  payer: string;
+  network: SolanaNetwork;
+  assetSecretKey?: Uint8Array;
+  coreCollectionAddress?: string | null;
+}): Promise<{
+  txBase64: string;
+  assetAddress: string;
+  assetSecretKey: Uint8Array;
+  coreCollectionAddress?: string;
+}> {
+  const platformSecret = getPlatformSecretKey();
+  if (!platformSecret) throw new Error("Server mint key not configured.");
+
+  const rpcUrl = getDirectRpcUrl(params.network);
+  const umi = createMintUmi(params.network);
+
+  const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(platformSecret);
+  const authoritySigner = createSignerFromKeypair(umi, authorityKeypair);
+  umi.use(keypairIdentity(authorityKeypair, false));
+
+  const assetSigner = params.assetSecretKey
+    ? createSignerFromKeypair(
+        umi,
+        umi.eddsa.createKeypairFromSecretKey(params.assetSecretKey),
+      )
+    : generateSigner(umi);
+
+  const payerNoop = createNoopSigner(umiPublicKey(params.payer));
+  const blockhash = await fetchLatestBlockhash(rpcUrl);
+
+  const collectionAddress =
+    params.coreCollectionAddress ?? getCoreCollectionAddress(params.network);
+
+  let coreCollectionAddress: string | undefined;
+  const createArgs: Parameters<typeof create>[1] = {
+    asset: assetSigner,
+    name: params.name,
+    uri: params.metadataUri,
+    owner: umiPublicKey(params.recipient),
+    payer: payerNoop,
+  };
+
+  if (collectionAddress) {
+    const collection = await fetchCoreCollection(umi, collectionAddress, params.network);
+    createArgs.collection = collection;
+    createArgs.authority = authoritySigner;
+    coreCollectionAddress = collectionAddress;
+  }
+
+  const tx = await create(umi, createArgs)
+    .useV0()
+    .setFeePayer(payerNoop)
+    .setBlockhash(blockhash)
+    .build(umi);
+
+  const serialized = umi.transactions.serialize(tx);
+  const txBase64 = base64.deserialize(serialized)[0];
+  const assetAddress = assetSigner.publicKey.toString();
+
+  return { txBase64, assetAddress, assetSecretKey: assetSigner.secretKey, coreCollectionAddress };
+}
 
 function describeSimulationError(err: unknown, logs?: string[] | null): string {
   const logText = logs?.join("\n") ?? "";
@@ -279,20 +205,10 @@ function describeSimulationError(err: unknown, logs?: string[] | null): string {
     return (
       `Not enough SOL in your wallet for the mint step. ` +
       `You have ~${have.toFixed(4)} SOL but need ~${need.toFixed(4)} SOL for account rent ` +
-      `(plus tx fees). Arweave storage is charged separately first — keep ~0.02 SOL remaining for the mint.`
+      `(plus tx fees). Arweave storage is charged separately first.`
     );
   }
-
-  const raw = JSON.stringify(err);
-  const custom = raw.match(/"Custom":(\d+)/);
-  if (custom) {
-    const code = Number(custom[1]);
-    const name = TM_ERROR_NAMES[code];
-    if (name) {
-      return `Transaction would fail on-chain (${name} / Custom:${code}): ${raw}`;
-    }
-  }
-  return `Transaction would fail on-chain: ${raw}`;
+  return `Transaction would fail on-chain: ${JSON.stringify(err)}`;
 }
 
 export async function simulateUnsignedTransaction(
@@ -311,14 +227,10 @@ export async function simulateUnsignedTransaction(
   );
   const err = result?.value?.err;
   if (err) {
-    const logs = result?.value?.logs ?? null;
-    throw new Error(describeSimulationError(err, logs));
+    throw new Error(describeSimulationError(err, result?.value?.logs ?? null));
   }
 }
 
-/**
- * Rebuild unsigned tx with a fresh blockhash + simulate before Phantom popup.
- */
 export async function prepareGiftTransactionForSigning(params: {
   pendingMint: PendingMint;
   payer: string;
@@ -329,9 +241,7 @@ export async function prepareGiftTransactionForSigning(params: {
   }
 
   const network = params.network ?? getSolanaNetwork();
-  const mintSecret = secretKeyFromB64(params.pendingMint.assetSecretKeyB64);
-  const tmCollectionMint =
-    params.pendingMint.tmCollectionMint ?? getGiftCollectionMint(network);
+  const assetSecret = secretKeyFromB64(params.pendingMint.assetSecretKeyB64);
 
   const { txBase64, assetAddress } = await buildUnsignedGiftTx({
     name: params.pendingMint.name,
@@ -339,12 +249,12 @@ export async function prepareGiftTransactionForSigning(params: {
     recipient: params.pendingMint.recipient,
     payer: params.pendingMint.payer,
     network,
-    mintSecretKey: mintSecret,
-    tmCollectionMint,
+    assetSecretKey: assetSecret,
+    coreCollectionAddress: params.pendingMint.coreCollectionAddress,
   });
 
   if (assetAddress !== params.pendingMint.assetAddress) {
-    throw new Error("Mint address mismatch when refreshing transaction.");
+    throw new Error("Asset address mismatch when refreshing transaction.");
   }
 
   await assertPayerCanAffordMintStep({ payer: params.payer, network });
@@ -353,10 +263,6 @@ export async function prepareGiftTransactionForSigning(params: {
   return { txBase64, assetAddress };
 }
 
-/**
- * Build an UNSIGNED Token Metadata create+mint transaction.
- * Phantom signs first; server co-signs afterward.
- */
 export async function buildGiftTransaction(params: {
   name: string;
   metadataUri: string;
@@ -367,35 +273,31 @@ export async function buildGiftTransaction(params: {
   if (!getPlatformSecretKey()) return null;
 
   const network = params.network ?? getSolanaNetwork();
-  const tmCollectionMint = getGiftCollectionMint(network);
-  const { txBase64, assetAddress, mintSecretKey } = await buildUnsignedGiftTx({
-    name: params.name,
-    metadataUri: params.metadataUri,
-    recipient: params.recipient,
-    payer: params.payer,
-    network,
-    tmCollectionMint,
-  });
+  const { txBase64, assetAddress, assetSecretKey, coreCollectionAddress } =
+    await buildUnsignedGiftTx({
+      name: params.name,
+      metadataUri: params.metadataUri,
+      recipient: params.recipient,
+      payer: params.payer,
+      network,
+    });
 
   return {
     txBase64,
     assetAddress,
+    coreCollectionAddress,
     pendingMint: {
-      assetSecretKeyB64: secretKeyToB64(mintSecretKey),
+      assetSecretKeyB64: secretKeyToB64(assetSecretKey),
       assetAddress,
       name: params.name,
       metadataUri: params.metadataUri,
       recipient: params.recipient,
       payer: params.payer,
-      ...(tmCollectionMint ? { tmCollectionMint } : {}),
+      ...(coreCollectionAddress ? { coreCollectionAddress } : {}),
     },
   };
 }
 
-/**
- * Co-sign a Phantom-signed mint tx, then submit.
- * Mint keypair + update authority (platform) co-sign after the user.
- */
 export async function cosignAndSubmitGiftTransaction(params: {
   userSignedTxBase64: string;
   pendingMint: PendingMint;
@@ -413,20 +315,24 @@ export async function cosignAndSubmitGiftTransaction(params: {
     Buffer.from(params.userSignedTxBase64, "base64"),
   );
 
-  const mintSecret = secretKeyFromB64(params.pendingMint.assetSecretKeyB64);
-  const mintKp = Keypair.fromSecretKey(mintSecret);
+  const assetSecret = secretKeyFromB64(params.pendingMint.assetSecretKeyB64);
+  const assetKp = Keypair.fromSecretKey(assetSecret);
   const platformKp = Keypair.fromSecretKey(platformSecret);
 
-  if (mintKp.publicKey.toBase58() !== params.pendingMint.assetAddress) {
-    throw new Error("Pending mint key does not match stored mint address.");
+  if (assetKp.publicKey.toBase58() !== params.pendingMint.assetAddress) {
+    throw new Error("Pending mint asset key does not match stored address.");
   }
 
-  // Phantom signed as fee payer first; server adds mint + update authority.
-  tx.sign([platformKp, mintKp]);
+  const cosigners = [assetKp];
+  const usesCoreCollection =
+    params.pendingMint.coreCollectionAddress ?? getCoreCollectionAddress(network);
+  if (usesCoreCollection) {
+    cosigners.unshift(platformKp);
+  }
+  tx.sign(cosigners);
 
-  const txSignature = await serverRpcCall<string>(rpcUrl, "sendTransaction", [
+  return serverRpcCall<string>(rpcUrl, "sendTransaction", [
     Buffer.from(tx.serialize()).toString("base64"),
     { encoding: "base64", skipPreflight: false, preflightCommitment: "confirmed" },
   ]);
-  return txSignature;
 }

@@ -6,6 +6,7 @@ import { explorerClusterQuery, getClientNetwork } from "@/lib/solana-config";
 import { uploadGiftWithPhantom } from "@/lib/irys-client";
 import { readJsonResponse } from "@/lib/fetch-json";
 import { buildGiftMetadataJson, GIFT_NAME } from "@/lib/gift-metadata";
+import { giftBundleHref } from "@/lib/gift-bundle";
 
 type FeeBreakdown = {
   user: {
@@ -18,6 +19,7 @@ type FeeBreakdown = {
 
 type GiftResult = {
   collectionId: string;
+  tokenId?: number;
   assetAddress?: string;
   txSignature?: string;
   metadataUri?: string;
@@ -49,7 +51,8 @@ type ImagePayload = {
 
 type GiftConfig = {
   platformCreatorAddress: string | null;
-  giftCollectionMint: string | null;
+  coreCollectionAddress: string | null;
+  giftBundleCollectionId: string;
   giftCollectionName: string;
 };
 
@@ -245,8 +248,6 @@ export default function GiftPage() {
             platformCreatorAddress:
               giftConfig?.platformCreatorAddress ?? publicKey,
             payerAddress: publicKey,
-            collectionName: giftConfig?.giftCollectionName,
-            collectionMint: giftConfig?.giftCollectionMint,
           }),
       });
 
@@ -269,6 +270,7 @@ export default function GiftPage() {
       });
       const data = await readJsonResponse<{
         collectionId?: string;
+        tokenId?: number;
         txBase64?: string;
         assetAddress?: string;
         requiresWalletSignature?: boolean;
@@ -279,6 +281,7 @@ export default function GiftPage() {
       if (!data.requiresWalletSignature || !data.txBase64) {
         setResult({
           collectionId: data.collectionId!,
+          tokenId: data.tokenId,
           metadataUri,
           imageUri,
           storageMethod: "arweave",
@@ -295,7 +298,12 @@ export default function GiftPage() {
       const confirmRes = await fetch("/api/gift", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionId: data.collectionId, txSignature, network }),
+        body: JSON.stringify({
+          collectionId: data.collectionId,
+          tokenId: data.tokenId,
+          txSignature,
+          network,
+        }),
       });
       const confirmData = await readJsonResponse<{ ok?: boolean; error?: string }>(confirmRes);
       if (!confirmRes.ok || !confirmData.ok) {
@@ -304,6 +312,7 @@ export default function GiftPage() {
 
       setResult({
         collectionId: data.collectionId!,
+        tokenId: data.tokenId,
         assetAddress: data.assetAddress,
         txSignature,
         metadataUri,
@@ -401,10 +410,10 @@ export default function GiftPage() {
             </a>
           )}
           <a
-            href={`/collection/${result.collectionId}`}
+            href={giftBundleHref(result.tokenId)}
             className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 hover:text-white"
           >
-            View collection page ↗
+            View in Dough Boi Gifts collection ↗
           </a>
         </div>
         <button

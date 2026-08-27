@@ -1,7 +1,7 @@
 import { fetchIrysPriceLamports } from "@/lib/irys-shared";
 
-/** Token Metadata NFT account rent (mint + metadata + master edition + ATA). */
-export const GIFT_MINT_RENT_LAMPORTS = BigInt(22_000_000);
+/** Token Metadata NFT account rent (legacy TM gifts). */
+export const GIFT_MINT_RENT_LAMPORTS = BigInt(6_500_000);
 
 /** Mint transaction fee buffer. */
 export const GIFT_TX_FEE_LAMPORTS = BigInt(10_000);

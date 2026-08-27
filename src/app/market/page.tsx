@@ -1,13 +1,20 @@
 import Link from "next/link";
 import { listCollections } from "@/lib/store";
 import { coverImageSrc, formatUsd } from "@/lib/collection-ui";
+import { isGiftBundle, isStandaloneGiftRecord } from "@/lib/gift-bundle";
 
 export const dynamic = "force-dynamic";
 
 export default async function MarketPage() {
   const all = await listCollections();
-  const live = all.filter((c) => c.status === "live" || c.status === "sold_out");
-  const secondary = all.filter((c) => c.secondaryEnabled);
+  const live = all.filter((c) => {
+    if (c.status !== "live" && c.status !== "sold_out") return false;
+    if (isStandaloneGiftRecord(c)) return false;
+    return true;
+  });
+  const secondary = all.filter((c) => c.secondaryEnabled && !isStandaloneGiftRecord(c));
+
+  const giftBundle = live.find((c) => isGiftBundle(c));
 
   return (
     <main className="container mx-auto max-w-6xl px-4 py-12">
@@ -26,20 +33,40 @@ export default async function MarketPage() {
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {live.map((c) => (
-              <Link key={c.id} href={`/collection/${c.id}`} className="rounded-2xl border border-white/15 bg-white/5 group block overflow-hidden">
+              <Link
+                key={c.id}
+                href={`/collection/${c.slug || c.id}`}
+                className="rounded-2xl border border-white/15 bg-white/5 group block overflow-hidden"
+              >
                 <div className="aspect-square overflow-hidden bg-white/5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={coverImageSrc(c)} alt={c.name} className="h-full w-full object-cover" />
                 </div>
                 <div className="flex items-center justify-between border-t border-white/15 p-4">
-                  <h3 className="truncate text-xl">{c.name}</h3>
-                  <span className="font-[family-name:var(--font-mono)] text-xs">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-xl">{c.name}</h3>
+                    {isGiftBundle(c) && (
+                      <p className="mt-1 text-xs text-white/45">
+                        {c.mintedCount} gift{c.mintedCount === 1 ? "" : "s"} minted
+                      </p>
+                    )}
+                  </div>
+                  <span className="font-[family-name:var(--font-mono)] text-xs shrink-0 ml-2">
                     {formatUsd(c.payments.basePriceUsd)}
                   </span>
                 </div>
               </Link>
             ))}
           </div>
+        )}
+        {giftBundle && giftBundle.mintedCount === 0 && (
+          <p className="mt-4 text-sm text-white/45">
+            Send a gift via{" "}
+            <Link href="/gift" className="text-primary hover:underline">
+              /gift
+            </Link>{" "}
+            — it will appear in {giftBundle.name}.
+          </p>
         )}
       </section>
 
@@ -52,7 +79,11 @@ export default async function MarketPage() {
         ) : (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {secondary.map((c) => (
-              <Link key={c.id} href={`/collection/${c.id}`} className="rounded-2xl border border-white/15 bg-white/5 group block overflow-hidden">
+              <Link
+                key={c.id}
+                href={`/collection/${c.slug || c.id}`}
+                className="rounded-2xl border border-white/15 bg-white/5 group block overflow-hidden"
+              >
                 <div className="aspect-square overflow-hidden bg-white/5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={coverImageSrc(c)} alt={c.name} className="h-full w-full object-cover" />

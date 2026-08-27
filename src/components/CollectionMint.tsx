@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { Collection, GeneratedToken } from "@/lib/types";
 import { useWallet, networkName } from "./WalletProvider";
 import { explorerClusterQuery } from "@/lib/solana-config";
+import { isGiftBundle } from "@/lib/gift-bundle";
 import { formatUsd, isTokenSold, nftPrice, tokenImageSrc, tokenName } from "@/lib/collection-ui";
 import { readJsonResponse } from "@/lib/fetch-json";
 
@@ -28,6 +29,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   const [mintBusy, setMintBusy] = useState(false);
 
   const isUnmintedGift =
+    !isGiftBundle(collection) &&
     collection.payments.giftMintEnabled &&
     collection.supply === 1 &&
     !collection.tokens.some((t) => t.mintTxUrl);

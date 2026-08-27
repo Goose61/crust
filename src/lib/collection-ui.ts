@@ -1,4 +1,5 @@
 import type { Collection, GeneratedToken } from "./types";
+import { giftDisplayNameFromToken, isGiftBundle } from "./gift-bundle";
 
 export function nftPrice(collection: Collection, token: GeneratedToken): number {
   let price = collection.payments.basePriceUsd;
@@ -25,6 +26,12 @@ export function tokenImageSrc(collectionId: string, token: GeneratedToken) {
 }
 
 export function coverImageSrc(collection: Collection) {
+  if (isGiftBundle(collection)) {
+    const latest = [...collection.tokens]
+      .reverse()
+      .find((t) => t.imageUri);
+    if (latest) return tokenImageSrc(collection.id, latest);
+  }
   const token = collection.tokens[0];
   if (!token) return "/images/dough/pixel-slice.webp";
   return tokenImageSrc(collection.id, token);
@@ -48,6 +55,9 @@ export function formatUsd(value: number) {
 }
 
 export function tokenName(collection: Collection, token: GeneratedToken) {
+  if (isGiftBundle(collection)) {
+    return giftDisplayNameFromToken(token);
+  }
   return collection.nameTemplate
     .replace("{name}", collection.name)
     .replace("{id}", String(token.tokenId));

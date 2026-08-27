@@ -134,8 +134,12 @@ export type PendingMint = {
   metadataUri: string;
   recipient: string;
   payer: string;
-  /** When set, mint includes verifyCollectionV1 for Phantom grouping. */
+  /** When set, mint includes verifyCollectionV1 for Phantom grouping (legacy TM). */
   tmCollectionMint?: string;
+  /** Metaplex Core collection for verified grouping. */
+  coreCollectionAddress?: string;
+  /** Token id within a gift bundle collection (if applicable). */
+  tokenId?: number;
 };
 
 export type CollectionSocials = {
@@ -159,6 +163,8 @@ export type TraitPricing = {
   };
 };
 
+export type CollectionKind = "standard" | "gift_bundle";
+
 export type Collection = {
   id: string;
   slug: string;
@@ -170,6 +176,10 @@ export type Collection = {
   status: CollectionStatus;
   supply: number;
   mintedCount: number;
+  /** `gift_bundle` = parent container for all /gift mints on Market. */
+  kind?: CollectionKind;
+  /** Legacy per-mint records point here after migration. */
+  parentCollectionId?: string;
   artPath: "path-b" | "path-a";
   stackOrder: string[];
   layers: LayerCatalog[];

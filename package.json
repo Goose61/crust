@@ -11,7 +11,9 @@
     "setup:mainnet-tm-collection": "node scripts/setup-mainnet-tm-collection.mjs",
     "verify:gift-creator": "node scripts/verify-gift-creator.mjs",
     "inspect:gift-nft": "node scripts/inspect-gift-nft.mjs",
-    "update:gift-metadata": "node scripts/update-gift-metadata.mjs"
+    "update:gift-metadata": "node scripts/update-gift-metadata.mjs",
+    "update:tm-collection-metadata": "node scripts/update-tm-collection-metadata.mjs",
+    "migrate:gift-bundle": "node scripts/migrate-gift-records-to-bundle.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
