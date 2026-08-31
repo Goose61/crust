@@ -12,19 +12,28 @@ const PROCESSING_START = 82;
 const LARGE_UPLOAD_UNAVAILABLE =
   "Large ZIP uploads need Vercel Blob storage (BLOB_READ_WRITE_TOKEN). In Vercel: Project → Storage → connect a Blob store to this project, then redeploy. ZIPs under 4 MB can upload without it.";
 
+const PRIVATE_STORE_PUBLIC_MISMATCH =
+  "Your Vercel Blob store is private but uploads were sent as public. Redeploy the latest version, or set BLOB_STORE_ACCESS=private in Vercel env vars.";
+
 export type UploadProgressCallback = (progress: CollectionUploadProgressState) => void;
 
 type BlobUploadStatus = {
   configured?: boolean;
+  access?: "public" | "private";
   error?: string;
 };
 
-async function assertBlobUploadConfigured(): Promise<void> {
+async function getBlobUploadStatus(): Promise<BlobUploadStatus> {
   const res = await fetch("/api/blob/upload");
-  const status = await readJsonResponse<BlobUploadStatus>(res);
+  return readJsonResponse<BlobUploadStatus>(res);
+}
+
+async function assertBlobUploadConfigured(): Promise<"public" | "private"> {
+  const status = await getBlobUploadStatus();
   if (!status.configured) {
     throw new Error(status.error ?? LARGE_UPLOAD_UNAVAILABLE);
   }
+  return status.access ?? "public";
 }
 
 function emitProgress(
@@ -48,7 +57,7 @@ export async function uploadCollectionZip(
     return {};
   }
 
-  await assertBlobUploadConfigured();
+  const access = await assertBlobUploadConfigured();
   emitProgress(onProgress, { phase: "uploading", percent: 2 }, file);
 
   const { upload } = await import("@vercel/blob/client");
@@ -56,7 +65,7 @@ export async function uploadCollectionZip(
 
   try {
     const blob = await upload(pathname, file, {
-      access: "public",
+      access,
       handleUploadUrl: "/api/blob/upload",
       contentType: file.type || "application/zip",
       multipart: file.size > 20 * 1024 * 1024,
@@ -67,11 +76,17 @@ export async function uploadCollectionZip(
     });
 
     emitProgress(onProgress, { phase: "uploading", percent: UPLOAD_PHASE_MAX }, file);
-    return { zipUrl: blob.url };
+    const zipUrl = access === "private"
+      ? `/api/blob/file/${blob.pathname.split("/").map(encodeURIComponent).join("/")}`
+      : blob.url;
+    return { zipUrl };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("client token")) {
       throw new Error(LARGE_UPLOAD_UNAVAILABLE);
+    }
+    if (message.includes("private store") || message.includes("public access")) {
+      throw new Error(PRIVATE_STORE_PUBLIC_MISMATCH);
     }
     throw err;
   }

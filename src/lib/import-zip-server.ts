@@ -1,15 +1,23 @@
 import JSZip from "jszip";
+import { isBlobStorageUrl } from "./blob-config";
+import { downloadBlobToTmp } from "./blob-storage";
+import { mkdtemp, readFile, rm } from "fs/promises";
+import os from "os";
+import path from "path";
 
 export async function loadZipBufferFromImportForm(form: FormData): Promise<Buffer> {
   const zipUrl = String(form.get("zipUrl") || "").trim();
   const file = form.get("file");
 
-  if (zipUrl.startsWith("http")) {
-    const res = await fetch(zipUrl);
-    if (!res.ok) {
-      throw new Error(`Could not download uploaded ZIP (HTTP ${res.status})`);
+  if (zipUrl.startsWith("http") || zipUrl.startsWith("/api/blob/file/") || isBlobStorageUrl(zipUrl)) {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "zip-import-"));
+    const tmpPath = path.join(tmpDir, "upload.zip");
+    try {
+      await downloadBlobToTmp(zipUrl, tmpPath);
+      return await readFile(tmpPath);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
     }
-    return Buffer.from(await res.arrayBuffer());
   }
 
   if (!(file instanceof File)) {
