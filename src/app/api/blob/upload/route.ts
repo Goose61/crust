@@ -1,33 +1,21 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
-import {
-  ZIP_CONTENT_TYPES,
-  getBlobToken,
-  resolveBlobAccess,
-} from "@/lib/blob-config";
+import { ZIP_CONTENT_TYPES, getBlobToken } from "@/lib/blob-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const BLOB_NOT_CONFIGURED =
-  "Large ZIP uploads need Vercel Blob storage. In the Vercel dashboard: Project → Storage → connect a Blob store, then redeploy.";
+  "Large ZIP uploads need a public Vercel Blob store. In the Vercel dashboard: Project → Storage → create a Blob store with Public access, connect it to this project, then redeploy.";
 
 /** Quick check before starting a client-side blob upload. */
 export async function GET(): Promise<NextResponse> {
-  const token = getBlobToken();
-  if (!token) {
-    return NextResponse.json({
-      configured: false,
-      directUploadMaxBytes: 4 * 1024 * 1024,
-      error: BLOB_NOT_CONFIGURED,
-    });
-  }
-
-  const access = await resolveBlobAccess(token);
+  const configured = !!getBlobToken();
   return NextResponse.json({
-    configured: true,
-    access,
+    configured,
+    access: "public" as const,
     directUploadMaxBytes: 4 * 1024 * 1024,
+    ...(configured ? {} : { error: BLOB_NOT_CONFIGURED }),
   });
 }
 
@@ -37,8 +25,6 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!token) {
     return NextResponse.json({ error: BLOB_NOT_CONFIGURED }, { status: 503 });
   }
-
-  const access = await resolveBlobAccess(token);
 
   try {
     const body = (await request.json()) as HandleUploadBody;
@@ -56,7 +42,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         // Collection import runs in a separate API call after upload.
       },
     });
-    return NextResponse.json({ ...jsonResponse, access });
+    return NextResponse.json(jsonResponse);
   } catch (err) {
     console.error("[POST /api/blob/upload]", err);
     const message = err instanceof Error ? err.message : "Upload token failed";

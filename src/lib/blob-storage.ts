@@ -1,41 +1,32 @@
 /**
  * Unified file storage layer.
  *
- * Production (BLOB_READ_WRITE_TOKEN set):  uses Vercel Blob.
+ * Production (BLOB_READ_WRITE_TOKEN set):  uses Vercel Blob — public CDN URLs.
  * Development (no token):                  writes to data/staging/ and returns
  *                                          /api/assets-blob/<pathname> URLs.
  */
 
 import { mkdir, writeFile, readFile } from "fs/promises";
 import path from "path";
-import type { BlobAccessType } from "@vercel/blob";
 import { STAGING_DIR } from "./paths";
-import { blobPublicUrl, getBlobToken, isBlobStorageUrl, resolveBlobAccess } from "./blob-config";
+import { getBlobToken } from "./blob-config";
 
 function hasBlobToken() {
   return !!getBlobToken();
 }
 
-async function blobAccess(): Promise<BlobAccessType> {
-  return resolveBlobAccess();
-}
-
-/** Upload a buffer and return a public URL. */
+/** Upload a buffer and return a public CDN URL. */
 export async function uploadBlob(
   pathname: string,
   buffer: Buffer,
   contentType: string,
 ): Promise<string> {
   if (hasBlobToken()) {
-    const access = await blobAccess();
     const { put } = await import("@vercel/blob");
     const blob = await put(pathname, buffer, {
-      access,
+      access: "public",
       contentType,
     });
-    if (access === "private") {
-      return blobPublicUrl(blob.pathname, access);
-    }
     return blob.url;
   }
 
@@ -60,7 +51,6 @@ export async function downloadBlobToTmp(
   tmpPath: string,
 ): Promise<string> {
   await mkdir(path.dirname(tmpPath), { recursive: true });
-
   if (url.startsWith("/api/assets-blob/")) {
     const rel = url.slice("/api/assets-blob/".length);
     const src = path.join(STAGING_DIR, rel);
@@ -68,21 +58,6 @@ export async function downloadBlobToTmp(
     await writeFile(tmpPath, buf);
     return tmpPath;
   }
-
-  if (url.startsWith("/api/blob/file/")) {
-    const rel = url.slice("/api/blob/file/".length);
-    const pathname = rel.split("/").map(decodeURIComponent).join("/");
-    const buf = await readBlobBuffer(pathname);
-    await writeFile(tmpPath, buf);
-    return tmpPath;
-  }
-
-  if (isBlobStorageUrl(url)) {
-    const buf = await readBlobBuffer(url);
-    await writeFile(tmpPath, buf);
-    return tmpPath;
-  }
-
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to download blob ${url}: ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
@@ -90,24 +65,10 @@ export async function downloadBlobToTmp(
   return tmpPath;
 }
 
-async function readBlobBuffer(urlOrPathname: string): Promise<Buffer> {
-  const token = getBlobToken();
-  if (!token) throw new Error("Blob storage not configured");
-
-  const access = await blobAccess();
-  const { get } = await import("@vercel/blob");
-  const result = await get(urlOrPathname, { access, token });
-  if (!result?.stream) {
-    throw new Error(`Blob not found: ${urlOrPathname}`);
-  }
-
-  return Buffer.from(await new Response(result.stream).arrayBuffer());
-}
-
 /** Delete a blob URL (no-op in dev). */
 export async function deleteBlob(url: string): Promise<void> {
   if (!hasBlobToken()) return;
-  if (!url.startsWith("http") && !url.startsWith("/api/blob/file/")) return;
+  if (!url.startsWith("http")) return;
   const { del } = await import("@vercel/blob");
   await del(url);
 }
