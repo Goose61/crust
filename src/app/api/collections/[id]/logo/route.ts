@@ -3,6 +3,7 @@ import path from "path";
 import { getCollection, saveCollection } from "@/lib/store";
 import { uploadBlob } from "@/lib/blob-storage";
 import { blobLogoPath } from "@/lib/paths";
+import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,16 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params;
   const collection = await getCollection(id);
   if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const auth = readAuthHeaders(req);
+  try {
+    assertCreatorAuth(auth, collection.payments.creatorWallet, {
+      allowUnsetCreator: !collection.payments.creatorWallet,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unauthorized";
+    return NextResponse.json({ error: message }, { status: 401 });
+  }
 
   const form = await req.formData();
   const file = form.get("file");

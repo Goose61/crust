@@ -269,6 +269,7 @@ export async function buildGiftTransaction(params: {
   recipient: string;
   payer: string;
   network?: SolanaNetwork;
+  coreCollectionAddress?: string | null;
 }): Promise<BuildTxResult | null> {
   if (!getPlatformSecretKey()) return null;
 
@@ -280,6 +281,7 @@ export async function buildGiftTransaction(params: {
       recipient: params.recipient,
       payer: params.payer,
       network,
+      coreCollectionAddress: params.coreCollectionAddress,
     });
 
   return {

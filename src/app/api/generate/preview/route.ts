@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     layers: body.layers ?? collection.layers,
     creatorWallet: body.creatorWallet ?? collection.payments.creatorWallet,
     sellerFeeBps: Math.round((body.royaltyPercent ?? 2.5) * 100),
+    royaltySplit: collection.royaltySplit,
     previewCount,
     uniqueness: true,
   });

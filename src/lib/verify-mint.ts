@@ -67,15 +67,36 @@ export function txSignatureFromMintUrl(mintTxUrl?: string): string | null {
 }
 
 /** Clear stale DB state when a prior mint attempt never landed on-chain. */
-export async function resetStaleMintState(collectionId: string) {
+export async function resetStaleMintState(collectionId: string, tokenId?: number) {
   const { updateCollection } = await import("./store");
+  const { isGiftBundle } = await import("./gift-bundle");
+
   await updateCollection(collectionId, (c) => {
-    c.status = "draft";
-    c.mintedCount = 0;
+    const resolvedTokenId = tokenId ?? c.pendingMint?.tokenId;
+    const token =
+      resolvedTokenId != null
+        ? c.tokens.find((t) => t.tokenId === resolvedTokenId)
+        : c.tokens[0];
+
     delete c.pendingMint;
-    if (c.tokens[0]) {
-      delete c.tokens[0].mintTxUrl;
-      delete c.tokens[0].assetAddress;
+    if (token) {
+      delete token.mintTxUrl;
+      delete token.assetAddress;
+    }
+
+    if (isGiftBundle(c) || c.supply <= 1) {
+      c.status = "draft";
+      c.mintedCount = 0;
+      if (c.tokens[0]) {
+        delete c.tokens[0].mintTxUrl;
+        delete c.tokens[0].assetAddress;
+      }
+      return c;
+    }
+
+    c.mintedCount = c.tokens.filter((t) => t.owner).length;
+    if (c.mintedCount < c.supply && c.status === "sold_out") {
+      c.status = "live";
     }
     return c;
   });

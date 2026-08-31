@@ -104,7 +104,7 @@ export async function POST() {
       { at: 100, events: ["enable_secondary", "snapshot_holders"] },
     ],
     payments: defaultPayments({ basePriceUsd: 0.1, giftMintEnabled: true }),
-    fees: { ownerPercent: 97, holdersPercent: 1, buybackPercent: 1, platformPercent: 1, locked: true },
+    fees: { ownerPercent: 98, holdersPercent: 1, buybackPercent: 1, locked: true },
     allowlist: [],
     waitlist: [],
     publicMintOpen: true,

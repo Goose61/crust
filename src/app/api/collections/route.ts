@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCollection, listCollections, saveCollection, slugify } from "@/lib/store";
 import { generateCollection } from "@/lib/compositor";
 import { publishCollection } from "@/lib/storage";
+import { refreshCollectionMetadata } from "@/lib/metadata-refresh";
+import { createMarketplaceCoreCollection } from "@/lib/create-core-collection";
+import { getPlatformSecretKey } from "@/lib/platform-key";
+import { explorerClusterQuery, getSolanaNetwork } from "@/lib/solana-config";
 import { rateLimit } from "@/lib/rate-limit";
+import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
 import type { Collection } from "@/lib/types";
 
 export async function GET() {
@@ -26,16 +31,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
+  const auth = readAuthHeaders(req);
+
+  try {
+    assertCreatorAuth(auth, existing.payments.creatorWallet, {
+      allowUnsetCreator: !existing.payments.creatorWallet,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unauthorized";
+    return NextResponse.json({ error: message }, { status: 401 });
+  }
+
   const merged: Collection = {
     ...existing,
     ...body,
     id: existing.id,
-    payments: { ...existing.payments, ...body.payments, pizzaDiscountPercent: 0 },
+    payments: {
+      ...existing.payments,
+      ...body.payments,
+      pizzaDiscountPercent: 0,
+      creatorWallet:
+        existing.payments.creatorWallet ||
+        body.payments?.creatorWallet?.trim() ||
+        auth?.wallet ||
+        "",
+    },
     fees: { ...existing.fees, ...body.fees },
     milestones: body.milestones ?? existing.milestones,
     layers: body.layers ?? existing.layers,
     socials: { ...existing.socials, ...body.socials },
-    traitPricing: body.traitPricing ?? existing.traitPricing,
+    buybackTokenCa: body.buybackTokenCa ?? existing.buybackTokenCa,
     logoUrl: body.logoUrl ?? existing.logoUrl,
     royaltyBps: body.royaltyBps ?? existing.royaltyBps,
     royaltySplit: body.royaltySplit ?? existing.royaltySplit,
@@ -44,21 +69,29 @@ export async function POST(req: NextRequest) {
   if (body.name) merged.slug = slugify(body.name);
 
   if (body.action === "generate") {
-    merged.tokens = await generateCollection({
-      collectionId: merged.id,
-      name: merged.name,
-      description: merged.description,
-      nameTemplate: merged.nameTemplate,
-      supply: merged.supply,
-      stackOrder: merged.stackOrder,
-      layers: merged.layers,
-      creatorWallet: merged.payments.creatorWallet,
-      sellerFeeBps: 250,
-      uniqueness: true,
-    });
+    try {
+      merged.tokens = await generateCollection({
+        collectionId: merged.id,
+        name: merged.name,
+        description: merged.description,
+        nameTemplate: merged.nameTemplate,
+        supply: merged.supply,
+        stackOrder: merged.stackOrder,
+        layers: merged.layers,
+        creatorWallet: merged.payments.creatorWallet,
+        sellerFeeBps: merged.royaltyBps ?? 500,
+        royaltySplit: merged.royaltySplit,
+        uniqueness: true,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Generation failed";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
   }
 
   if (body.action === "publish") {
+    const withMeta = await refreshCollectionMetadata(merged);
+    merged.tokens = withMeta.tokens;
     const published = await publishCollection(merged);
     merged.tokens = published.tokens;
     merged.irysPublished = published.provider === "arweave";
@@ -71,6 +104,24 @@ export async function POST(req: NextRequest) {
     if (!merged.fees.locked) merged.fees = { ...merged.fees, locked: true };
     merged.status = "live";
     merged.publicMintOpen = merged.allowlist.length === 0;
+
+    const network = getSolanaNetwork();
+    if (!merged.coreCollectionAddress && getPlatformSecretKey()) {
+      try {
+        const withMeta =
+          merged.tokens.some((t) => t.metadataUri?.startsWith("http"))
+            ? merged
+            : await refreshCollectionMetadata(merged);
+        merged.tokens = withMeta.tokens;
+        const core = await createMarketplaceCoreCollection(merged, network);
+        if (core) {
+          merged.coreCollectionAddress = core.address;
+          merged.coreCollectionTxUrl = `https://explorer.solana.com/tx/${core.txSignature}${explorerClusterQuery(network)}`;
+        }
+      } catch (e) {
+        console.error("[go-live] Core collection creation failed:", e);
+      }
+    }
   }
 
   await saveCollection(merged);

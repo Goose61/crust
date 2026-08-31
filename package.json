@@ -13,7 +13,8 @@
     "inspect:gift-nft": "node scripts/inspect-gift-nft.mjs",
     "update:gift-metadata": "node scripts/update-gift-metadata.mjs",
     "update:core-collection-metadata": "node scripts/update-core-collection-metadata.mjs",
-    "migrate:gift-bundle": "node scripts/migrate-gift-records-to-bundle.mjs"
+    "migrate:gift-bundle": "node scripts/migrate-gift-records-to-bundle.mjs",
+    "smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -52,7 +53,8 @@
     "sharp": "^0.35.3",
     "slick-carousel": "^1.8.1",
     "tailwind-merge": "^3.6.0",
-    "tw-animate-css": "^1.4.0"
+    "tw-animate-css": "^1.4.0",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

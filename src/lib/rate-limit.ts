@@ -34,7 +34,10 @@ export async function rateLimit(
 
     return { allowed: true, remaining: maxRequests - count - 1 };
   } catch {
-    // If DB is unavailable, allow the request (fail open)
+    // Fail closed in production; allow in dev when DB is unavailable.
+    if (process.env.NODE_ENV === "production") {
+      return { allowed: false, remaining: 0 };
+    }
     return { allowed: true, remaining: maxRequests };
   }
 }

@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
       recipient,
       payer,
       network,
+      coreCollectionAddress: collection.coreCollectionAddress,
     });
 
     if (!txResult) {
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
       const t = findGiftToken(c, tokenId);
       if (t) t.assetAddress = txResult.assetAddress;
       c.pendingMint = { ...txResult.pendingMint, tokenId };
-      if (!isGiftBundle(c)) {
+      if (!isGiftBundle(c) && c.supply <= 1) {
         c.status = "draft";
         c.mintedCount = 0;
       }
@@ -169,9 +170,14 @@ export async function PATCH(req: NextRequest) {
 
     if (isGiftBundle(collection)) {
       syncGiftBundleCounts(collection);
-    } else {
+    } else if (collection.supply <= 1) {
       collection.status = "sold_out";
       collection.mintedCount = 1;
+    } else {
+      collection.mintedCount = collection.tokens.filter((t) => t.owner).length;
+      if (collection.mintedCount >= collection.supply) {
+        collection.status = "sold_out";
+      }
     }
     collection.updatedAt = new Date().toISOString();
 

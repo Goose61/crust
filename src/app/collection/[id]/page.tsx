@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { getCollection } from "@/lib/store";
 import { CollectionMint } from "@/components/CollectionMint";
@@ -19,16 +20,21 @@ export default async function CollectionPage({
   let collection = await getCollection(id);
   if (!collection) notFound();
 
-  // Heal false "sold_out" when Phantom returned a signature but tx never landed.
-  const token = collection.tokens[0];
-  const sig = txSignatureFromMintUrl(token?.mintTxUrl);
-  if (sig && collection.payments.giftMintEnabled) {
+  // Heal false mint state when Phantom returned a signature but tx never landed.
+  for (const t of collection.tokens) {
+    const sig = txSignatureFromMintUrl(t.mintTxUrl);
+    if (!sig || !t.owner) continue;
     const verified = await verifyMintTransaction(sig, getSolanaNetwork());
     if (!verified.ok) {
-      await resetStaleMintState(collection.id);
+      await resetStaleMintState(collection.id, t.tokenId);
       collection = (await getCollection(id)) ?? collection;
+      break;
     }
   }
 
-  return <CollectionMint initial={collection} />;
+  return (
+    <Suspense fallback={<div className="container mx-auto px-4 py-20 text-white/50">Loading…</div>}>
+      <CollectionMint initial={collection} />
+    </Suspense>
+  );
 }

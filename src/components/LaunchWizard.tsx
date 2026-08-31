@@ -11,6 +11,14 @@ import {
   type TraitPricing,
   type TraitRarity,
 } from "@/lib/types";
+import { tokenImageSrc } from "@/lib/collection-ui";
+import { buildAuthHeaders } from "@/lib/wallet-auth-client";
+import {
+  PRIMARY_PLATFORM_FEE_PERCENT,
+  PRIMARY_PLATFORM_TOTAL_PERCENT,
+  PRIMARY_TRADE_TAX_PERCENT,
+  SECONDARY_PLATFORM_FEE_PERCENT,
+} from "@/lib/platform-fees";
 import { useWallet } from "./WalletProvider";
 
 /* ─── steps ─── */
@@ -127,17 +135,21 @@ export function LaunchWizard() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [allowlistText, setAllowlistText] = useState("");
+  const [allowlistMsg, setAllowlistMsg] = useState<string | null>(null);
 
   const STEPS = mode === "layers" ? STEPS_LAYERS : STEPS_READY;
 
   const feesTotal = collection
     ? collection.fees.ownerPercent + collection.fees.holdersPercent +
-      collection.fees.buybackPercent + collection.fees.platformPercent
+      collection.fees.buybackPercent
     : 0;
 
   const royaltySplitTotal = (royaltyOwner ? royaltySplit.ownerPercent : 0) +
     (royaltyHolders ? royaltySplit.holdersPercent : 0) +
     (royaltyBuyback ? royaltySplit.buybackPercent : 0);
+
+  const buybackEnabled =
+    royaltyBuyback || (collection?.fees.buybackPercent ?? 0) > 0;
 
   /* estimated storage & launch cost */
   const estimatedStorageMB = collection ? (collection.tokens.length * 201) / 1024 : 0;
@@ -159,8 +171,12 @@ export function LaunchWizard() {
           : royaltySplitTotal === 100,
         label: "Royalty split sums to 100%",
       },
+      {
+        ok: !buybackEnabled || Boolean(collection.buybackTokenCa?.trim()),
+        label: "Buyback token CA (contract address)",
+      },
     ];
-  }, [collection, publicKey, feesTotal, royaltyOwner, royaltyHolders, royaltyBuyback, royaltySplitTotal]);
+  }, [collection, publicKey, feesTotal, royaltyOwner, royaltyHolders, royaltyBuyback, royaltySplitTotal, buybackEnabled]);
 
   const uniqueTraits = useMemo(
     () => (collection ? buildUniqueTraits(collection.tokens) : []),
@@ -217,9 +233,17 @@ export function LaunchWizard() {
   async function save(patch: Partial<Collection> = {}, action?: string, base?: Collection) {
     const src = base ?? collection;
     if (!src) return src;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (publicKey) {
+      try {
+        Object.assign(headers, await buildAuthHeaders(publicKey));
+      } catch (e) {
+        throw new Error(e instanceof Error ? e.message : "Sign in with Phantom to save");
+      }
+    }
     const res = await fetch("/api/collections", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ ...src, ...patch, action }),
     });
     const data = await res.json();
@@ -228,11 +252,32 @@ export function LaunchWizard() {
     return data.collection as Collection;
   }
 
+  async function persistDraft() {
+    if (!collection || !publicKey) return;
+    try {
+      await save({
+        payments: { ...collection.payments, creatorWallet: publicKey },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save progress");
+      throw e;
+    }
+  }
+
   async function uploadLogo(collectionId: string) {
     if (!logoFile) return;
     const form = new FormData();
     form.set("file", logoFile);
-    await fetch(`/api/collections/${collectionId}/logo`, { method: "POST", body: form });
+    const headers: Record<string, string> = {};
+    if (publicKey) Object.assign(headers, await buildAuthHeaders(publicKey));
+    const res = await fetch(`/api/collections/${collectionId}/logo`, {
+      method: "POST",
+      headers,
+      body: form,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Logo upload failed");
+    if (data.collection) setCollection(data.collection);
   }
 
   /* ── generate previews ── */
@@ -275,6 +320,10 @@ export function LaunchWizard() {
   /* ── go live ── */
   async function goLive() {
     if (!collection) return;
+    if (!publicKey) {
+      await connect();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -284,10 +333,14 @@ export function LaunchWizard() {
         holdersPercent: royaltyHolders ? royaltySplit.holdersPercent : 0,
         buybackPercent: royaltyBuyback ? royaltySplit.buybackPercent : 0,
       };
+      if (buybackEnabled && !collection.buybackTokenCa?.trim()) {
+        throw new Error("Enter the buyback token contract address (CA) before launch.");
+      }
       let current = await save({
         payments: { ...collection.payments, creatorWallet: payout },
         royaltyBps,
         royaltySplit: royaltySplitData,
+        buybackTokenCa: collection.buybackTokenCa?.trim() || undefined,
       });
       if (!current) return;
       if (logoFile) await uploadLogo(current.id);
@@ -678,14 +731,35 @@ export function LaunchWizard() {
                     <Info tip="A portion goes to a buyback treasury that periodically purchases NFTs from the secondary market at or near the floor price, helping maintain price stability for your collection." />
                   </label>
                   {royaltyBuyback && (
-                    <div className="mt-2 flex items-center gap-2 pl-6">
-                      <input type="number" min={0} max={100} value={royaltySplit.buybackPercent}
-                        onChange={(e) => setRoyaltySplit({ ...royaltySplit, buybackPercent: Number(e.target.value) })}
-                        className="input w-20 text-sm" />
-                      <span className="text-xs text-white/60">% of royalty → buyback treasury</span>
+                    <div className="mt-2 space-y-2 pl-6">
+                      <div className="flex items-center gap-2">
+                        <input type="number" min={0} max={100} value={royaltySplit.buybackPercent}
+                          onChange={(e) => setRoyaltySplit({ ...royaltySplit, buybackPercent: Number(e.target.value) })}
+                          className="input w-20 text-sm" />
+                        <span className="text-xs text-white/60">% of royalty → buyback treasury</span>
+                      </div>
                     </div>
                   )}
                 </div>
+
+                {buybackEnabled && (
+                  <div className="rounded-lg border border-[#f5c542]/30 bg-[#f5c542]/5 p-3">
+                    <Field label="Buyback token CA (contract address)">
+                      <input
+                        className="input font-mono text-sm"
+                        placeholder="Solana SPL mint address, e.g. Tokenkeg..."
+                        value={collection.buybackTokenCa ?? ""}
+                        onChange={(e) =>
+                          setCollection({ ...collection, buybackTokenCa: e.target.value.trim() })
+                        }
+                      />
+                    </Field>
+                    <p className="mt-1 text-xs text-white/50">
+                      Required when buyback is enabled. The treasury uses this token for floor buybacks and holder
+                      rewards tied to the buyback program.
+                    </p>
+                  </div>
+                )}
 
                 {/* Split validation */}
                 {(royaltyOwner || royaltyHolders || royaltyBuyback) && (
@@ -724,7 +798,7 @@ export function LaunchWizard() {
                 {collection.tokens.slice(0, 12).map((t) => (
                   <div key={t.tokenId} className="aspect-square overflow-hidden rounded-lg bg-white/5">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={`/api/assets/${collection.id}/${t.imageRelPath}`} alt={`#${t.tokenId}`}
+                    <img src={tokenImageSrc(collection, t)} alt={`#${t.tokenId}`}
                       className="h-full w-full object-cover" />
                   </div>
                 ))}
@@ -828,10 +902,21 @@ export function LaunchWizard() {
         {stepIs("Fees") && collection && (
           <div className="space-y-4">
             <div>
-              <h2 className="text-lg font-semibold text-white">Primary mint fee split</h2>
+              <h2 className="text-lg font-semibold text-white">Primary mint revenue split</h2>
               <p className="mt-1 text-sm text-white/60">
-                How each mint payment is divided. Must sum to 100%. Locks permanently at launch. Choose carefully.
+                How your share of each mint is divided among creator, holders, and buyback treasury.
+                Must sum to 100%. Locks permanently at launch.
               </p>
+            </div>
+
+            <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60">
+              <p className="font-medium text-white/80">Crypgo marketplace fees (fixed, not part of your split)</p>
+              <p className="mt-1">
+                Primary: {PRIMARY_PLATFORM_FEE_PERCENT}% platform + {PRIMARY_TRADE_TAX_PERCENT}% trade tax
+                ({PRIMARY_PLATFORM_TOTAL_PERCENT}% total, deducted before your split)
+              </p>
+              <p>Secondary: {SECONDARY_PLATFORM_FEE_PERCENT}% on resales</p>
+              <p className="mt-1 text-white/40">No launch fee. Payment processing is covered by Crypgo.</p>
             </div>
 
             {/* Visual bar */}
@@ -839,21 +924,18 @@ export function LaunchWizard() {
               <div className="bg-primary transition-all" style={{ width: `${collection.fees.ownerPercent}%` }} />
               <div className="bg-white/70 transition-all" style={{ width: `${collection.fees.holdersPercent}%` }} />
               <div className="bg-[#f5c542] transition-all" style={{ width: `${collection.fees.buybackPercent}%` }} />
-              <div className="bg-[#6b3e2a] transition-all" style={{ width: `${collection.fees.platformPercent}%` }} />
             </div>
             <div className="flex flex-wrap gap-3 text-xs text-white/60">
               <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 bg-primary" />Creator</span>
               <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 bg-white/70" />Holders</span>
               <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 bg-[#f5c542]" />Buyback</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 bg-[#6b3e2a]" />Platform</span>
             </div>
 
-            {(["ownerPercent", "holdersPercent", "buybackPercent", "platformPercent"] as const).map((key) => {
+            {(["ownerPercent", "holdersPercent", "buybackPercent"] as const).map((key) => {
               const labels: Record<string, string> = {
                 ownerPercent:   "Creator %",
                 holdersPercent: "Holders %",
                 buybackPercent: "Buyback treasury %",
-                platformPercent:"Platform %",
               };
               return (
                 <Field key={key} label={labels[key]}>
@@ -865,8 +947,26 @@ export function LaunchWizard() {
               );
             })}
             <p className={`text-xs font-semibold ${feesTotal === 100 ? "text-emerald-400" : "text-red-400"}`}>
-              Total: {feesTotal}%{feesTotal !== 100 && ` (${100 - feesTotal > 0 ? `need +${100 - feesTotal}%` : `over by ${feesTotal - 100}%`})`}
+              Split total: {feesTotal}%{feesTotal !== 100 && ` (${100 - feesTotal > 0 ? `need +${100 - feesTotal}%` : `over by ${feesTotal - 100}%`})`}
             </p>
+
+            {collection.fees.buybackPercent > 0 && !royaltyBuyback && (
+              <div className="rounded-lg border border-[#f5c542]/30 bg-[#f5c542]/5 p-3">
+                <Field label="Buyback token CA (contract address)">
+                  <input
+                    className="input font-mono text-sm"
+                    placeholder="Solana SPL mint address"
+                    value={collection.buybackTokenCa ?? ""}
+                    onChange={(e) =>
+                      setCollection({ ...collection, buybackTokenCa: e.target.value.trim() })
+                    }
+                  />
+                </Field>
+                <p className="mt-1 text-xs text-white/50">
+                  Required when primary mint fees include a buyback treasury share.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -1064,23 +1164,25 @@ export function LaunchWizard() {
                   <span>Solana transaction fees</span>
                   <span>~$0.01</span>
                 </div>
-                <div className="flex justify-between text-white/70">
-                  <span>Platform launch fee</span>
-                  <span>Free</span>
-                </div>
                 <div className="mt-2 flex justify-between border-t border-white/10 pt-2 font-medium text-white">
                   <span>Total upfront</span>
                   <span>~${(estimatedStorageUsd + 0.01).toFixed(2)}</span>
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-white/35">
-                Storage cost is estimated at ~$0.006/MB on Arweave. Actual cost depends on image sizes and
-                the AR token price at publish time. Platform takes {collection.fees.platformPercent}% of each
-                mint (${(collection.payments.basePriceUsd * collection.fees.platformPercent / 100).toFixed(2)} per NFT).
+                Storage is estimated at ~$0.006/MB on Arweave. No Crypgo launch fee — marketplace takes{" "}
+                {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint ({PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax)
+                and {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales only.
               </p>
               {estimatedMintRevenue > 0 && (
                 <p className="mt-1 text-[11px] text-emerald-400/70">
-                  Full sell-out = ~${(estimatedMintRevenue * (100 - collection.fees.platformPercent) / 100).toFixed(0)} to you after platform fee.
+                  Full sell-out ≈ $
+                  {(
+                    estimatedMintRevenue *
+                    (1 - PRIMARY_PLATFORM_TOTAL_PERCENT / 100) *
+                    (collection.fees.ownerPercent / 100)
+                  ).toFixed(0)}{" "}
+                  to creator wallet (before holder/buyback split).
                 </p>
               )}
             </div>
@@ -1098,15 +1200,31 @@ export function LaunchWizard() {
                 onChange={(e) => setAllowlistText(e.target.value)} />
               <button className="mt-2 text-xs text-primary underline"
                 onClick={async () => {
-                  if (!allowlistText.trim()) return;
-                  await fetch(`/api/collections/${collection.id}`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ action: "allowlist", wallets: allowlistText }),
-                  });
+                  if (!allowlistText.trim() || !collection || !publicKey) return;
+                  setAllowlistMsg(null);
+                  try {
+                    const headers = {
+                      "Content-Type": "application/json",
+                      ...(await buildAuthHeaders(publicKey)),
+                    };
+                    const res = await fetch(`/api/collections/${collection.id}`, {
+                      method: "POST",
+                      headers,
+                      body: JSON.stringify({ action: "allowlist", wallets: allowlistText }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error);
+                    setCollection(data.collection);
+                    setAllowlistMsg("Allowlist saved.");
+                  } catch (e) {
+                    setAllowlistMsg(e instanceof Error ? e.message : "Allowlist save failed");
+                  }
                 }}>
                 Save allowlist
               </button>
+              {allowlistMsg && (
+                <p className="mt-1 text-xs text-white/50">{allowlistMsg}</p>
+              )}
             </div>
 
             <button disabled={busy || !checklist.every((c) => c.ok)} onClick={() => void goLive()}
@@ -1126,8 +1244,23 @@ export function LaunchWizard() {
             ← Back
           </button>
           {step < STEPS.length - 1 && (
-            <button disabled={!collection} onClick={() => setStep((s) => s + 1)}
-              className="rounded-lg bg-white/10 px-5 py-2 text-sm text-white disabled:opacity-40 hover:bg-white/15">
+            <button
+              disabled={!collection || busy}
+              onClick={async () => {
+                if (publicKey && collection) {
+                  setBusy(true);
+                  try {
+                    await persistDraft();
+                    setStep((s) => s + 1);
+                  } finally {
+                    setBusy(false);
+                  }
+                } else {
+                  setStep((s) => s + 1);
+                }
+              }}
+              className="rounded-lg bg-white/10 px-5 py-2 text-sm text-white disabled:opacity-40 hover:bg-white/15"
+            >
               Next →
             </button>
           )}

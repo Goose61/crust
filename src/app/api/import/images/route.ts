@@ -6,11 +6,13 @@ import { assignRarityRanks } from "@/lib/compositor";
 import { uploadBlob, uploadBlobText } from "@/lib/blob-storage";
 import { blobImagePath, blobMetadataPath } from "@/lib/paths";
 import { rateLimit } from "@/lib/rate-limit";
+import { buildTokenMetadataJson } from "@/lib/metadata-builders";
 import { defaultPayments, type Collection, type GeneratedToken } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 500 MB
+const DEFAULT_ROYALTY_BPS = 500;
 
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0] ?? "unknown";
@@ -35,6 +37,7 @@ export async function POST(req: NextRequest) {
 
   const name = String(form.get("name") || "Imported collection");
   const description = String(form.get("description") || "");
+  const creatorWallet = String(form.get("creatorWallet") || "");
   const zip = await JSZip.loadAsync(Buffer.from(await file.arrayBuffer()));
   const id = newId();
 
@@ -83,12 +86,15 @@ export async function POST(req: NextRequest) {
   const ranked = assignRarityRanks(tokens);
   for (const token of ranked) {
     const metaJson = JSON.stringify(
-      {
+      buildTokenMetadataJson({
         name: `${name} #${token.tokenId}`,
+        symbol: name.slice(0, 8).toUpperCase(),
         description,
+        sellerFeeBps: DEFAULT_ROYALTY_BPS,
         image: token.imageUri ?? token.imageRelPath,
         attributes: token.attributes,
-      },
+        creatorWallet,
+      }),
       null,
       2,
     );
@@ -112,13 +118,13 @@ export async function POST(req: NextRequest) {
     blindMint: false,
     revealTrigger: "manual",
     revealed: true,
+    royaltyBps: DEFAULT_ROYALTY_BPS,
     milestones: [{ at: 100, events: ["enable_secondary", "snapshot_holders"] }],
-    payments: defaultPayments({ giftMintEnabled: true }),
+    payments: defaultPayments({ giftMintEnabled: true, creatorWallet }),
     fees: {
-      ownerPercent: 97,
+      ownerPercent: 98,
       holdersPercent: 1,
       buybackPercent: 1,
-      platformPercent: 1,
       locked: false,
     },
     allowlist: [],

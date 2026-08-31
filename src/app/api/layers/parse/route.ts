@@ -67,10 +67,9 @@ export async function POST(req: NextRequest) {
     ],
     payments: defaultPayments(),
     fees: {
-      ownerPercent: 97,
+      ownerPercent: 98,
       holdersPercent: 1,
       buybackPercent: 1,
-      platformPercent: 1,
       locked: false,
     },
     allowlist: [],

@@ -25,9 +25,14 @@ function resolvePendingMint(collection: Collection, payer: string): PendingMint 
     throw new Error("No pending mint for this collection — rebuild the mint transaction.");
   }
 
-  const token = collection.tokens[0];
+  const tokenId = pm.tokenId ?? collection.tokens[0]?.tokenId;
+  const token =
+    tokenId != null
+      ? collection.tokens.find((t) => t.tokenId === tokenId)
+      : collection.tokens[0];
+
   if (pm.name && pm.metadataUri && pm.recipient && pm.payer) {
-    return pm;
+    return { ...pm, tokenId: token?.tokenId ?? pm.tokenId };
   }
 
   if (!token?.metadataUri || !token.owner) {
@@ -36,6 +41,7 @@ function resolvePendingMint(collection: Collection, payer: string): PendingMint 
 
   return {
     ...pm,
+    tokenId: token.tokenId,
     name: pm.name ?? `${collection.name} #${token.tokenId}`,
     metadataUri: pm.metadataUri ?? token.metadataUri,
     recipient: pm.recipient ?? token.owner,

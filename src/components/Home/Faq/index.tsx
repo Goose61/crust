@@ -40,9 +40,9 @@ const faqData = [
       "It stays listed here. Sold out is a milestone. Creators can unlock a holder lounge, snapshots, and native secondary listings on this market.",
   },
   {
-    question: "What fees can I set?",
+    question: "What fees does Crypgo charge?",
     answer:
-      "Split primary proceeds across creator, holders, buyback, and platform. The split locks at launch so collectors can see the rules before they mint.",
+      "No launch fee. Primary mints: 0.7% platform + 0.3% trade tax (1% total, deducted before your creator split). Secondary sales: 0.5%. You configure how your share splits across creator, holders, and buyback treasury. Payment processing is covered by Crypgo — buyers and creators never see a checkout surcharge.",
   },
   {
     question: "Is there a gift mint or allowlist?",

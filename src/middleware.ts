@@ -19,7 +19,8 @@ export function middleware(req: NextRequest) {
 
     corsHeaders["Access-Control-Allow-Origin"] = allowed;
     corsHeaders["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS";
-    corsHeaders["Access-Control-Allow-Headers"] = "Content-Type, X-Requested-With";
+    corsHeaders["Access-Control-Allow-Headers"] =
+      "Content-Type, X-Requested-With, X-Wallet, X-Signature, X-Timestamp";
     corsHeaders["Vary"] = "Origin";
 
     if (req.method === "OPTIONS") {
@@ -64,7 +65,7 @@ export function middleware(req: NextRequest) {
         "https://blob.vercel-storage.com",
       ].join(" "),
       "font-src 'self' https://fonts.gstatic.com",
-      "frame-src https://dexscreener.com",
+      "frame-src https://dexscreener.com https://pay.slicechain.io",
       "frame-ancestors 'none'",
       "base-uri 'self'",
     ].join("; "),

@@ -3,7 +3,7 @@ import { existsSync } from "fs";
 import path from "path";
 import sharp from "sharp";
 import JSZip from "jszip";
-import type { GeneratedToken, LayerCatalog } from "./types";
+import type { GeneratedToken, LayerCatalog, RoyaltySplit } from "./types";
 import {
   tmpImagesDir,
   tmpMetadataDir,
@@ -13,6 +13,7 @@ import {
   blobMetadataPath,
 } from "./paths";
 import { uploadBlob, uploadBlobText, downloadBlobToTmp } from "./blob-storage";
+import { buildTokenMetadataJson } from "./metadata-builders";
 
 const SKIP = /(^|\/)(__MACOSX|\.DS_Store)/;
 
@@ -128,6 +129,7 @@ export type GenerateOptions = {
   layers: LayerCatalog[];
   creatorWallet: string;
   sellerFeeBps: number;
+  royaltySplit?: RoyaltySplit;
   seed?: number;
   previewCount?: number;
   uniqueness?: boolean;
@@ -160,7 +162,13 @@ export async function generateCollection(opts: GenerateOptions) {
       });
       dna = attributes.map((a) => a.value).join("|");
       attempts += 1;
-    } while (opts.uniqueness && seen.has(dna) && attempts < 80);
+    } while (opts.uniqueness && seen.has(dna) && attempts < 200);
+
+    if (opts.uniqueness && seen.has(dna)) {
+      throw new Error(
+        `Could not generate unique DNA for token #${i}. Reduce supply or add more trait values.`,
+      );
+    }
 
     seen.add(dna);
 
@@ -222,19 +230,16 @@ export async function generateCollection(opts: GenerateOptions) {
     const name = opts.nameTemplate
       .replace("{name}", opts.name)
       .replace("{id}", String(token.tokenId));
-    const metadata = {
+    const metadata = buildTokenMetadataJson({
       name,
       symbol: opts.name.slice(0, 8).toUpperCase(),
       description: opts.description,
-      seller_fee_basis_points: opts.sellerFeeBps,
+      sellerFeeBps: opts.sellerFeeBps,
       image: token.imageUri ?? token.imageRelPath,
       attributes: token.attributes,
-      properties: {
-        files: [{ uri: token.imageUri ?? token.imageRelPath, type: "image/png" }],
-        category: "image",
-        creators: [{ address: opts.creatorWallet || "CREATOR_WALLET", share: 100 }],
-      },
-    };
+      creatorWallet: opts.creatorWallet,
+      royaltySplit: opts.royaltySplit,
+    });
     const metaJson = JSON.stringify(metadata, null, 2);
     const localMetaPath = path.join(metaDir, `${token.tokenId}.json`);
     await writeFile(localMetaPath, metaJson);

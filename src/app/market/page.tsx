@@ -12,7 +12,12 @@ export default async function MarketPage() {
     if (isStandaloneGiftRecord(c)) return false;
     return true;
   });
-  const secondary = all.filter((c) => c.secondaryEnabled && !isStandaloneGiftRecord(c));
+  const secondary = all.filter(
+    (c) =>
+      c.secondaryEnabled &&
+      !isStandaloneGiftRecord(c) &&
+      c.tokens.some((t) => t.listing),
+  );
 
   const giftBundle = live.find((c) => isGiftBundle(c));
 

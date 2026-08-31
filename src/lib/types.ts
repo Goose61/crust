@@ -85,6 +85,7 @@ export type PaymentSettings = {
   acceptSlicePay: boolean;
   pizzaDiscountPercent: number;
   giftMintEnabled: boolean;
+  bundleMintEnabled?: boolean;
   creatorWallet: string;
 };
 
@@ -106,7 +107,8 @@ export type FeeSplit = {
   ownerPercent: number;
   holdersPercent: number;
   buybackPercent: number;
-  platformPercent: number;
+  /** @deprecated Fixed platform fees — see platform-fees.ts. Kept for legacy records; always 0. */
+  platformPercent?: number;
   locked: boolean;
 };
 
@@ -123,6 +125,11 @@ export type GeneratedToken = {
   assetAddress?: string;
   /** Explorer link for the mint transaction */
   mintTxUrl?: string;
+  /** Secondary market listing (when secondaryEnabled on collection) */
+  listing?: {
+    priceUsd: number;
+    listedAt: string;
+  } | null;
 };
 
 /** Server-only co-sign data for in-progress gift mints (cleared after confirm). */
@@ -153,6 +160,49 @@ export type RoyaltySplit = {
   ownerPercent: number;
   holdersPercent: number;
   buybackPercent: number;
+};
+
+export type FeeLedgerEntry = {
+  at: string;
+  kind: "primary_mint" | "secondary_sale";
+  saleUsd: number;
+  tokenId?: number;
+  payer?: string;
+  seller?: string;
+  ownerUsd: number;
+  holdersUsd: number;
+  buybackUsd: number;
+  platformUsd: number;
+  platformFeeUsd?: number;
+  tradeTaxUsd?: number;
+};
+
+export type FeeDistributionRound = {
+  id: string;
+  openedAt: string;
+  milestoneAt?: number;
+  poolUsd: number;
+  totalShares: number;
+  snapshot: { wallet: string; count: number }[];
+  claims: { wallet: string; amountUsd: number; claimedAt: string }[];
+};
+
+export type TreasuryBuybackRecord = {
+  at: string;
+  tokenId: number;
+  priceUsd: number;
+  seller: string;
+  buybackTokenCa?: string;
+};
+
+export type FeeLedger = {
+  holderTreasuryUsd: number;
+  buybackTreasuryUsd: number;
+  platformTreasuryUsd: number;
+  ownerAccruedUsd: number;
+  entries: FeeLedgerEntry[];
+  distributionRounds: FeeDistributionRound[];
+  buybacks: TreasuryBuybackRecord[];
 };
 
 export type TraitRarity = "common" | "rare" | "epic";
@@ -189,6 +239,11 @@ export type Collection = {
   revealAtPercent?: number;
   revealAt?: string | null;
   revealed: boolean;
+  /** Token ids revealed under staggered / partial reveal (1-based). */
+  revealedTokenIds?: number[];
+  traitBrowserEnabled?: boolean;
+  feeClaimsOpen?: boolean;
+  referralBonusBoostUntil?: string | null;
   milestones: Milestone[];
   payments: PaymentSettings;
   fees: FeeSplit;
@@ -206,6 +261,23 @@ export type Collection = {
   royaltySplit?: RoyaltySplit;
   socials?: CollectionSocials;
   traitPricing?: TraitPricing;
+  /** On-chain Metaplex Core collection address (created at go-live). */
+  coreCollectionAddress?: string;
+  coreCollectionTxUrl?: string;
+  /** Batch index for reveal_batch milestone (0-based). */
+  revealedBatchIndex?: number;
+  holderSnapshots?: {
+    takenAt: string;
+    milestoneAt: number;
+    holders: { wallet: string; count: number }[];
+  }[];
+  sequelAllowlistFromHolders?: boolean;
+  treasuryBuybackActive?: boolean;
+  /** SPL / meme token contract address for buyback rewards (required when buyback enabled). */
+  buybackTokenCa?: string;
+  discordRoleSyncEnabled?: boolean;
+  airdropSplPending?: boolean;
+  feeLedger?: FeeLedger;
   /** Ephemeral asset keypair for Phantom-first multi-signer mint flow */
   pendingMint?: PendingMint;
   createdAt: string;

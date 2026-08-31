@@ -1,25 +1,56 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { Collection, GeneratedToken } from "@/lib/types";
 import { useWallet, networkName } from "./WalletProvider";
 import { explorerClusterQuery } from "@/lib/solana-config";
 import { isGiftBundle } from "@/lib/gift-bundle";
-import { formatUsd, isTokenSold, nftPrice, tokenImageSrc, tokenName } from "@/lib/collection-ui";
+import { formatUsd, filterTokensByTrait, isTokenSold, nftPrice, tokenImageSrc, tokenName, uniqueTraitFilters } from "@/lib/collection-ui";
 import { readJsonResponse } from "@/lib/fetch-json";
+import { buildAuthHeaders } from "@/lib/wallet-auth-client";
+import {
+  PRIMARY_PLATFORM_FEE_PERCENT,
+  PRIMARY_TRADE_TAX_PERCENT,
+  PRIMARY_PLATFORM_TOTAL_PERCENT,
+  SECONDARY_PLATFORM_FEE_PERCENT,
+} from "@/lib/platform-fees";
+import {
+  SLICEPAY_ORIGINS,
+  buildSlicePayReturnUrl,
+  messageInvoiceId,
+  messageLooksPaid,
+  openSlicePayCheckout,
+  parseSlicePayReturnParams,
+} from "@/lib/slicepay-client";
+import { isPaidStatus } from "@/lib/slicepay-shared";
 
 export function CollectionMint({ initial }: { initial: Collection }) {
-  const { publicKey, connect, signMintTx } = useWallet();
+  const searchParams = useSearchParams();
+  const { publicKey, connect, signMintTx, signAndSendTx } = useWallet();
   const [collection, setCollection] = useState(initial);
   const [selected, setSelected] = useState<GeneratedToken | null>(null);
   const [recipient, setRecipient] = useState("");
-  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [checkoutPending, setCheckoutPending] = useState(false);
+  const [invoiceId, setInvoiceId] = useState<string | null>(null);
+  const [isDemoCheckout, setIsDemoCheckout] = useState(false);
+  const [slicePayLive, setSlicePayLive] = useState<boolean | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"slicepay" | "sol">("slicepay");
+  const [checkoutKind, setCheckoutKind] = useState<"primary_mint" | "secondary_buy">("primary_mint");
+  const [listPrice, setListPrice] = useState("");
+  const [traitFilters, setTraitFilters] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const pendingTokenRef = useRef<GeneratedToken | null>(null);
+  const returnHandledRef = useRef(false);
 
-  const tokens = useMemo(
-    () => [...collection.tokens].sort((a, b) => a.tokenId - b.tokenId),
-    [collection.tokens],
+  const tokens = useMemo(() => {
+    const sorted = [...collection.tokens].sort((a, b) => a.tokenId - b.tokenId);
+    return filterTokensByTrait(sorted, collection, traitFilters);
+  }, [collection, traitFilters]);
+  const traitFilterOptions = useMemo(
+    () => (collection.traitBrowserEnabled ? uniqueTraitFilters(collection) : []),
+    [collection],
   );
   const soldCount = tokens.filter((t) => isTokenSold(t, collection)).length;
   const remaining = Math.max(0, collection.supply - soldCount);
@@ -28,13 +59,109 @@ export function CollectionMint({ initial }: { initial: Collection }) {
 
   const [mintBusy, setMintBusy] = useState(false);
 
-  const isUnmintedGift =
-    !isGiftBundle(collection) &&
-    collection.payments.giftMintEnabled &&
-    collection.supply === 1 &&
-    !collection.tokens.some((t) => t.mintTxUrl);
+  const pendingOnChainToken = useMemo(() => {
+    if (!publicKey) return null;
+    return (
+      collection.tokens.find(
+        (t) =>
+          t.owner &&
+          !t.mintTxUrl &&
+          (t.owner === publicKey || collection.pendingMint?.payer === publicKey),
+      ) ?? null
+    );
+  }, [collection, publicKey]);
 
-  async function completeOnChainMint() {
+  const isUnmintedGift =
+    Boolean(pendingOnChainToken) &&
+    (collection.payments.giftMintEnabled ||
+      collection.supply > 1 ||
+      Boolean(collection.pendingMint));
+
+  useEffect(() => {
+    fetch("/api/slicepay/invoice")
+      .then((r) => r.json())
+      .then((d) => setSlicePayLive(Boolean(d.configured)))
+      .catch(() => setSlicePayLive(false));
+  }, []);
+
+  const completeSlicePayFlow = useCallback(
+    async (token: GeneratedToken, id: string, kind: "primary_mint" | "secondary_buy") => {
+      setBusy(true);
+      setMessage("Payment confirmed — completing mint…");
+      try {
+        if (kind === "secondary_buy") {
+          await finalizeSecondaryBuy(token, id);
+        } else {
+          await finalizeMint(token, isDemoCheckout ? "demo" : "slicepay", undefined, id);
+        }
+        setCheckoutPending(false);
+        window.history.replaceState({}, "", window.location.pathname);
+      } catch (e) {
+        setMessage(e instanceof Error ? e.message : "Could not complete purchase");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [isDemoCheckout],
+  );
+
+  const pollInvoice = useCallback(
+    async (id: string, token: GeneratedToken, kind: "primary_mint" | "secondary_buy") => {
+      const res = await fetch(`/api/slicepay/status/${encodeURIComponent(id)}`);
+      const data = await res.json();
+      if (data.paid || isPaidStatus(data.status)) {
+        await completeSlicePayFlow(token, id, kind);
+        return true;
+      }
+      return false;
+    },
+    [completeSlicePayFlow],
+  );
+
+  useEffect(() => {
+    if (!invoiceId || !pendingTokenRef.current || !checkoutPending) return;
+    const token = pendingTokenRef.current;
+    const kind = checkoutKind;
+    const interval = setInterval(() => {
+      void pollInvoice(invoiceId, token, kind);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [invoiceId, checkoutPending, checkoutKind, pollInvoice]);
+
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (!SLICEPAY_ORIGINS.some((o) => event.origin.startsWith(o.replace(/\/$/, "")))) return;
+      if (!messageLooksPaid(event.data)) return;
+      const id = messageInvoiceId(event.data) ?? invoiceId;
+      const token = pendingTokenRef.current ?? selected;
+      if (!id || !token) return;
+      void completeSlicePayFlow(token, id, checkoutKind);
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [invoiceId, selected, checkoutKind, completeSlicePayFlow]);
+
+  useEffect(() => {
+    if (returnHandledRef.current) return;
+    const { invoiceId: retId, tokenId, status } = parseSlicePayReturnParams(searchParams.toString());
+    if (!retId || !searchParams.get("slicepay")) return;
+    returnHandledRef.current = true;
+    const token =
+      tokenId != null
+        ? collection.tokens.find((t) => t.tokenId === tokenId) ?? null
+        : collection.tokens[0] ?? null;
+    if (!token) return;
+    setSelected(token);
+    setInvoiceId(retId);
+    setCheckoutPending(true);
+    if (isPaidStatus(status)) {
+      void completeSlicePayFlow(token, retId, token.listing ? "secondary_buy" : "primary_mint");
+    } else {
+      void pollInvoice(retId, token, token.listing ? "secondary_buy" : "primary_mint");
+    }
+  }, [searchParams, collection.tokens, completeSlicePayFlow, pollInvoice]);
+
+  async function completeOnChainMint(tokenId?: number) {
     if (!publicKey) {
       await connect();
       return;
@@ -42,30 +169,49 @@ export function CollectionMint({ initial }: { initial: Collection }) {
     setMintBusy(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/gift/mint", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          collectionId: collection.id,
-          payer: publicKey,
-          network: networkName(),
-        }),
-      });
-      const data = await readJsonResponse<{
-        txBase64?: string;
-        assetAddress?: string;
-        collection?: Collection;
-        error?: string;
-      }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Could not build mint transaction");
+      const resolvedTokenId =
+        tokenId ??
+        collection.pendingMint?.tokenId ??
+        pendingOnChainToken?.tokenId ??
+        collection.tokens[0]?.tokenId;
+
+      if (!collection.pendingMint || collection.pendingMint.tokenId !== resolvedTokenId) {
+        const res = await fetch("/api/gift/mint", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            collectionId: collection.id,
+            tokenId: resolvedTokenId,
+            payer: publicKey,
+            network: networkName(),
+          }),
+        });
+        const data = await readJsonResponse<{
+          txBase64?: string;
+          assetAddress?: string;
+          collection?: Collection;
+          error?: string;
+        }>(res);
+        if (!res.ok) throw new Error(data.error ?? "Could not build mint transaction");
+        if (data.collection) setCollection(data.collection);
+      }
 
       setMessage("Approve the mint in Phantom…");
       const txSignature = await signMintTx(collection.id, networkName());
 
-      const confirm = await fetch("/api/gift/mint", {
+      const confirmEndpoint = isGiftBundle(collection)
+        ? "/api/gift/mint"
+        : `/api/collections/${collection.id}/confirm-mint`;
+
+      const confirm = await fetch(confirmEndpoint, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionId: collection.id, txSignature, network: networkName() }),
+        body: JSON.stringify({
+          collectionId: collection.id,
+          tokenId: resolvedTokenId,
+          txSignature,
+          network: networkName(),
+        }),
       });
       const confirmed = await readJsonResponse<{ collection?: Collection; error?: string }>(confirm);
       if (!confirm.ok) throw new Error(confirmed.error ?? "Could not confirm mint");
@@ -79,30 +225,224 @@ export function CollectionMint({ initial }: { initial: Collection }) {
     }
   }
 
-  async function startCheckout(token: GeneratedToken) {
+  async function startCheckout(token: GeneratedToken, kind: "primary_mint" | "secondary_buy" = "primary_mint") {
     if (!publicKey) {
       await connect();
       return;
     }
     setBusy(true);
     setMessage(null);
+    setInvoiceId(null);
+    setIsDemoCheckout(false);
+    setCheckoutKind(kind);
+    pendingTokenRef.current = token;
     try {
+      const amountUsd =
+        kind === "secondary_buy" && token.listing
+          ? token.listing.priceUsd
+          : nftPrice(collection, token);
+      const orderPrefix = kind === "secondary_buy" ? `secondary-${collection.id}-` : `mint-${collection.id}-`;
       const inv = await fetch("/api/slicepay/invoice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amountUsd: collection.payments.basePriceUsd,
-          orderId: `mint-${collection.id}-${token.tokenId}-${Date.now()}`,
-          description: tokenName(collection, token),
-          redirectUrl: window.location.href,
+          amountUsd,
+          orderId: `${orderPrefix}${token.tokenId}-${Date.now()}`,
+          description:
+            kind === "secondary_buy"
+              ? `Secondary: ${tokenName(collection, token)}`
+              : tokenName(collection, token),
+          redirectUrl: buildSlicePayReturnUrl(collection.slug || collection.id, token.tokenId),
+          collectionId: collection.id,
+          tokenId: token.tokenId,
+          payerWallet: publicKey,
+          kind,
         }),
       }).then((r) => r.json());
-      if (inv.checkoutUrl) setCheckoutUrl(inv.checkoutUrl);
+      if (inv.error) throw new Error(String(inv.error));
+      if (inv.invoiceId) setInvoiceId(String(inv.invoiceId));
       if (inv.demo) {
-        setMessage("Demo checkout: confirm below to record the mint on this marketplace.");
+        setIsDemoCheckout(true);
+        setMessage("Demo mode — confirm below after reviewing the order.");
+        setCheckoutPending(true);
+        return;
+      }
+      if (inv.checkoutUrl) {
+        setCheckoutPending(true);
+        setMessage("Complete payment in the SlicePay window. This page will update automatically.");
+        openSlicePayCheckout(String(inv.checkoutUrl));
       }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Checkout failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function payWithSol(token: GeneratedToken) {
+    if (!publicKey) {
+      await connect();
+      return;
+    }
+    if (!collection.payments.creatorWallet) {
+      setMessage("Creator payout wallet not configured.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const amountUsd = nftPrice(collection, token);
+      const { quote } = await fetch(`/api/quotes?usd=${amountUsd}`).then((r) => r.json()) as {
+        quote: { sol: number };
+      };
+      const { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } =
+        await import("@solana/web3.js");
+      const { getRpcUrl } = await import("@/lib/solana-config");
+      const connection = new Connection(getRpcUrl(), "confirmed");
+      const { blockhash } = await connection.getLatestBlockhash();
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: new PublicKey(publicKey),
+          toPubkey: new PublicKey(collection.payments.creatorWallet),
+          lamports: Math.ceil(quote.sol * LAMPORTS_PER_SOL),
+        }),
+      );
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = new PublicKey(publicKey);
+      const txBase64 = Buffer.from(
+        tx.serialize({ requireAllSignatures: false, verifySignatures: false }),
+      ).toString("base64");
+      setMessage(`Sending ${quote.sol.toFixed(4)} SOL…`);
+      const txSignature = await signAndSendTx(txBase64);
+      await finalizeMint(token, "sol", txSignature);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "SOL payment failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finalizeMint(
+    token: GeneratedToken,
+    method: "slicepay" | "sol" | "demo",
+    txSignature?: string,
+    confirmedInvoiceId?: string,
+  ) {
+    if (!publicKey) return;
+    const res = await fetch(`/api/collections/${collection.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "mint",
+        payer: publicKey,
+        recipient: collection.payments.giftMintEnabled && recipient ? recipient : publicKey,
+        qty: 1,
+        tokenId: token.tokenId,
+        method,
+        invoiceId: method === "slicepay" ? (confirmedInvoiceId ?? invoiceId) : undefined,
+        txSignature: method === "sol" ? txSignature : undefined,
+        network: networkName(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    setCollection(data.collection);
+    if (data.requiresOnChainMint) {
+      setMessage(`Paid — approve the on-chain mint in Phantom for #${token.tokenId}…`);
+      await completeOnChainMint(token.tokenId);
+    } else {
+      const feeNote =
+        Array.isArray(data.feeBreakdowns) && data.feeBreakdowns.length > 0
+          ? ` · Holder pool +${formatUsd(
+              data.feeBreakdowns.reduce(
+                (sum: number, b: { holdersUsd: number }) => sum + b.holdersUsd,
+                0,
+              ),
+            )}`
+          : "";
+      setMessage(`Minted #${data.mintedTokenIds.join(", ")} → ${data.recipient}${feeNote}`);
+    }
+    setCheckoutPending(false);
+    setInvoiceId(null);
+    setSelected(null);
+  }
+
+  async function finalizeSecondaryBuy(token: GeneratedToken, confirmedInvoiceId?: string) {
+    if (!publicKey) return;
+    const res = await fetch(`/api/collections/${collection.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "buy_secondary",
+        payer: publicKey,
+        tokenId: token.tokenId,
+        method: isDemoCheckout ? "demo" : "slicepay",
+        invoiceId: confirmedInvoiceId ?? invoiceId,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    setCollection(data.collection);
+    const feeNote = data.feeBreakdown
+      ? ` · Royalties: holder +${formatUsd(data.feeBreakdown.holdersUsd)}, buyback +${formatUsd(data.feeBreakdown.buybackUsd)}`
+      : "";
+    setMessage(`Purchased #${token.tokenId}${feeNote}`);
+    setCheckoutPending(false);
+    setInvoiceId(null);
+    setSelected(null);
+  }
+
+  async function listForSale(token: GeneratedToken) {
+    if (!publicKey) {
+      await connect();
+      return;
+    }
+    const priceUsd = Number(listPrice);
+    if (!priceUsd || priceUsd <= 0) {
+      setMessage("Enter a valid list price.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(await buildAuthHeaders(publicKey)),
+      };
+      const res = await fetch(`/api/collections/${collection.id}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ action: "list_secondary", tokenId: token.tokenId, priceUsd }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setCollection(data.collection);
+      setMessage(`#${token.tokenId} listed at ${formatUsd(priceUsd)}`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Listing failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlist(token: GeneratedToken) {
+    if (!publicKey) return;
+    setBusy(true);
+    try {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(await buildAuthHeaders(publicKey)),
+      };
+      const res = await fetch(`/api/collections/${collection.id}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ action: "unlist_secondary", tokenId: token.tokenId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setCollection(data.collection);
+      setMessage(`#${token.tokenId} unlisted`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Unlist failed");
     } finally {
       setBusy(false);
     }
@@ -116,24 +456,11 @@ export function CollectionMint({ initial }: { initial: Collection }) {
     setBusy(true);
     setMessage(null);
     try {
-      const res = await fetch(`/api/collections/${collection.id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "mint",
-          payer: publicKey,
-          recipient: collection.payments.giftMintEnabled && recipient ? recipient : publicKey,
-          qty: 1,
-          tokenId: token.tokenId,
-          method: "slicepay",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setCollection(data.collection);
-      setMessage(`Minted #${data.mintedTokenIds.join(", ")} → ${data.recipient}`);
-      setCheckoutUrl(null);
-      setSelected(null);
+      if (checkoutKind === "secondary_buy") {
+        await finalizeSecondaryBuy(token);
+      } else {
+        await finalizeMint(token, isDemoCheckout ? "demo" : "slicepay");
+      }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Mint failed");
     } finally {
@@ -162,23 +489,37 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         </div>
       </div>
 
-      {isUnmintedGift && (
+      {isUnmintedGift && pendingOnChainToken && (
         <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-medium text-amber-200">Stored on Arweave — not minted on-chain yet</p>
+            <p className="text-sm font-medium text-amber-200">
+              #{pendingOnChainToken.tokenId} paid — on-chain mint pending
+            </p>
             <p className="text-xs text-amber-200/70 mt-0.5">
-              The image and metadata are permanent, but the Solana NFT was never created.
-              Connect Phantom, then mint to send it to the recipient wallet.
+              Metadata is stored permanently, but the Solana NFT still needs to be minted.
+              Connect Phantom as the payer and approve the transaction (~0.002 SOL rent + fees).
             </p>
           </div>
           <button
             type="button"
-            onClick={() => void completeOnChainMint()}
+            onClick={() => void completeOnChainMint(pendingOnChainToken.tokenId)}
             disabled={mintBusy}
             className="shrink-0 rounded-full bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary/80 disabled:opacity-50"
           >
             {mintBusy ? "Minting…" : publicKey ? "Mint on-chain now" : "Connect & mint"}
           </button>
+        </div>
+      )}
+
+      {collection.blindMint && !collection.revealed && (
+        <div className="mb-6 rounded-lg border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/60">
+          Blind mint active — art reveals when the collection hits its reveal trigger or the creator reveals manually.
+        </div>
+      )}
+
+      {slicePayLive === false && (
+        <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-100/90">
+          SlicePay is in demo mode — add SLICEPAY_MERCHANT_ID and SLICEPAY_API_KEY to accept real payments.
         </div>
       )}
 
@@ -213,40 +554,78 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         <div className="tile p-5">
           <h2 className="text-2xl">Fee structure</h2>
           <p className="mt-2 font-[family-name:var(--font-body)] text-sm text-white/50">
-            Locked at launch. Every mint splits across these four buckets.
+            Creator split locks at launch. Crypgo marketplace fees are fixed and deducted before your split.
           </p>
           <div className="mt-5 flex h-3 overflow-hidden border border-white/15">
             <div className="bg-primary" style={{ width: `${fees.ownerPercent}%` }} />
             <div className="bg-white" style={{ width: `${fees.holdersPercent}%` }} />
             <div className="bg-[#f5c542]" style={{ width: `${fees.buybackPercent}%` }} />
-            <div className="bg-[#6b3e2a]" style={{ width: `${fees.platformPercent}%` }} />
           </div>
           <ul className="mt-4 space-y-3 font-[family-name:var(--font-body)] text-sm">
-            <FeeRow color="bg-primary" label="Creator" percent={fees.ownerPercent} note="Paid to the collection owner" />
+            <FeeRow color="bg-primary" label="Creator" percent={fees.ownerPercent} note="Your share after marketplace fees" />
             <FeeRow color="bg-white" label="Holders" percent={fees.holdersPercent} note="Shared with current holders" />
             <FeeRow color="bg-[#f5c542]" label="Buyback" percent={fees.buybackPercent} note="Treasury buybacks" />
-            <FeeRow color="bg-[#6b3e2a]" label="Platform" percent={fees.platformPercent} note="Marketplace operations" />
           </ul>
+          <div className="mt-4 rounded border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/50">
+            <p className="font-medium text-white/70">Crypgo marketplace (fixed)</p>
+            <p className="mt-1">Primary: {PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax ({PRIMARY_PLATFORM_TOTAL_PERCENT}% total)</p>
+            <p>Secondary: {SECONDARY_PLATFORM_FEE_PERCENT}%</p>
+          </div>
         </div>
       </div>
 
       <section className="mt-12">
-        <div className="mb-5 flex items-end justify-between">
+        <div className="mb-5 flex items-end justify-between gap-4 flex-wrap">
           <h2 className="text-4xl">The collection</h2>
           <p className="font-[family-name:var(--font-mono)] text-xs text-white/50">
             {remaining} for sale · {soldCount} sold
           </p>
         </div>
+
+        {collection.traitBrowserEnabled && traitFilterOptions.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            {traitFilterOptions.map(({ traitType, values }) => (
+              <label key={traitType} className="text-xs text-white/60">
+                {traitType}
+                <select
+                  className="ml-1 rounded border border-white/15 bg-white/5 px-2 py-1 text-white"
+                  value={traitFilters[traitType] ?? ""}
+                  onChange={(e) =>
+                    setTraitFilters((prev) => {
+                      const next = { ...prev };
+                      if (e.target.value) next[traitType] = e.target.value;
+                      else delete next[traitType];
+                      return next;
+                    })
+                  }
+                >
+                  <option value="">All</option>
+                  {values.map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {tokens.map((token) => {
             const sold = isTokenSold(token, collection);
+            const listed = Boolean(token.listing);
+            const priceLabel = listed
+              ? formatUsd(token.listing!.priceUsd)
+              : sold
+                ? "SOLD"
+                : formatUsd(nftPrice(collection, token));
             return (
               <button
                 key={token.tokenId}
                 type="button"
                 onClick={() => {
                   setSelected(token);
-                  setCheckoutUrl(null);
+                  setCheckoutPending(false);
+                  setInvoiceId(null);
                   setMessage(null);
                 }}
                 className="tile text-left"
@@ -254,7 +633,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                 <div className="relative aspect-square">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={tokenImageSrc(collection.id, token)}
+                    src={tokenImageSrc(collection, token)}
                     alt={tokenName(collection, token)}
                     className={`h-full w-full object-cover ${sold ? "grayscale" : ""}`}
                   />
@@ -263,7 +642,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                       sold ? "bg-white text-black" : "bg-primary text-white"
                     }`}
                   >
-                    {sold ? "SOLD" : formatUsd(nftPrice(collection, token))}
+                    {priceLabel}
                   </span>
                 </div>
                 <div className="border-t border-white/15 px-2 py-2">
@@ -289,7 +668,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
             <div className="grid md:grid-cols-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={tokenImageSrc(collection.id, selected)}
+                src={tokenImageSrc(collection, selected)}
                 alt={tokenName(collection, selected)}
                 className="aspect-square w-full object-cover"
               />
@@ -367,6 +746,83 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                   </div>
                 )}
 
+                <p className="mt-3 text-lg font-semibold text-white">
+                  {selected.listing
+                    ? formatUsd(selected.listing.priceUsd)
+                    : formatUsd(nftPrice(collection, selected))}
+                </p>
+
+                {/* Secondary: buy listed token */}
+                {collection.secondaryEnabled && selected.listing && selected.owner !== publicKey && (
+                  <div className="mt-5 space-y-3">
+                    <p className="text-xs text-white/50">Secondary listing</p>
+                    {checkoutPending ? (
+                      <>
+                        <p className="text-sm text-white/60">
+                          Waiting for SlicePay… this page updates automatically when payment completes.
+                        </p>
+                        {(isDemoCheckout || !slicePayLive) && (
+                          <button
+                            disabled={busy}
+                            onClick={() => void confirmMint(selected)}
+                            className="w-full border border-white/15 py-3 text-sm font-medium disabled:opacity-40"
+                          >
+                            {busy ? "Confirming…" : "Confirm purchase (demo)"}
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <button
+                        disabled={busy || !collection.payments.acceptSlicePay}
+                        onClick={() => void startCheckout(selected, "secondary_buy")}
+                        className="w-full bg-primary py-3 text-sm font-medium text-white disabled:opacity-40"
+                      >
+                        {busy ? "Opening SlicePay…" : `Buy for ${formatUsd(selected.listing.priceUsd)}`}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Secondary: owner list / unlist */}
+                {collection.secondaryEnabled &&
+                  isTokenSold(selected, collection) &&
+                  selected.owner === publicKey && (
+                  <div className="mt-5 space-y-3 border-t border-white/10 pt-4">
+                    <p className="text-xs text-white/50">Your NFT — secondary market</p>
+                    {selected.listing ? (
+                      <>
+                        <p className="text-sm text-white">Listed at {formatUsd(selected.listing.priceUsd)}</p>
+                        <button
+                          disabled={busy}
+                          onClick={() => void unlist(selected)}
+                          className="w-full border border-white/15 py-2 text-sm"
+                        >
+                          Remove listing
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          placeholder="List price (USD)"
+                          value={listPrice}
+                          onChange={(e) => setListPrice(e.target.value)}
+                        />
+                        <button
+                          disabled={busy}
+                          onClick={() => void listForSale(selected)}
+                          className="w-full bg-white/10 py-2 text-sm text-white hover:bg-white/15"
+                        >
+                          List for sale
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {!isTokenSold(selected, collection) && collection.status === "live" && (
                   <div className="mt-5 space-y-3">
                     {collection.payments.giftMintEnabled && (
@@ -377,29 +833,63 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                         onChange={(e) => setRecipient(e.target.value)}
                       />
                     )}
-                    {!checkoutUrl ? (
+
+                    {(collection.payments.acceptSlicePay ||
+                      collection.payments.acceptSol ||
+                      collection.payments.acceptUsdc) && (
+                      <div className="flex gap-2 text-xs">
+                        {collection.payments.acceptSlicePay && (
+                          <button
+                            type="button"
+                            onClick={() => setPaymentMethod("slicepay")}
+                            className={`rounded-full px-3 py-1 ${paymentMethod === "slicepay" ? "bg-primary text-white" : "bg-white/10 text-white/60"}`}
+                          >
+                            SlicePay (card / USDC)
+                          </button>
+                        )}
+                        {collection.payments.acceptSol && (
+                          <button
+                            type="button"
+                            onClick={() => setPaymentMethod("sol")}
+                            className={`rounded-full px-3 py-1 ${paymentMethod === "sol" ? "bg-primary text-white" : "bg-white/10 text-white/60"}`}
+                          >
+                            SOL
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {paymentMethod === "sol" && collection.payments.acceptSol ? (
                       <button
                         disabled={busy}
-                        onClick={() => void startCheckout(selected)}
+                        onClick={() => void payWithSol(selected)}
                         className="w-full bg-primary py-3 text-sm font-medium text-primary-foreground disabled:opacity-40"
                       >
-                        {busy ? "Opening checkout…" : publicKey ? "Checkout with SlicePay" : "Connect wallet"}
+                        {busy ? "Processing…" : publicKey ? `Pay ${formatUsd(nftPrice(collection, selected))} in SOL` : "Connect wallet"}
                       </button>
-                    ) : (
+                    ) : checkoutPending ? (
                       <>
-                        <iframe
-                          title="SlicePay checkout"
-                          src={checkoutUrl}
-                          className="h-[420px] w-full border border-white/15 bg-white/5"
-                        />
-                        <button
-                          disabled={busy}
-                          onClick={() => void confirmMint(selected)}
-                          className="w-full border border-white/15 py-3 text-sm font-medium disabled:opacity-40"
-                        >
-                          {busy ? "Confirming…" : "Confirm mint"}
-                        </button>
+                        <p className="text-sm text-white/60">
+                          Waiting for SlicePay… complete payment in the popup window.
+                        </p>
+                        {(isDemoCheckout || slicePayLive === false) && (
+                          <button
+                            disabled={busy}
+                            onClick={() => void confirmMint(selected)}
+                            className="w-full border border-white/15 py-3 text-sm font-medium disabled:opacity-40"
+                          >
+                            {busy ? "Confirming…" : "Confirm mint (demo)"}
+                          </button>
+                        )}
                       </>
+                    ) : (
+                      <button
+                        disabled={busy || !collection.payments.acceptSlicePay}
+                        onClick={() => void startCheckout(selected, "primary_mint")}
+                        className="w-full bg-primary py-3 text-sm font-medium text-primary-foreground disabled:opacity-40"
+                      >
+                        {busy ? "Opening SlicePay…" : publicKey ? "Pay with SlicePay" : "Connect wallet"}
+                      </button>
                     )}
                   </div>
                 )}

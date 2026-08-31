@@ -58,10 +58,9 @@ export async function getOrCreateGiftBundle(): Promise<Collection> {
       acceptPizza: false,
     }),
     fees: {
-      ownerPercent: 97,
+      ownerPercent: 98,
       holdersPercent: 1,
       buybackPercent: 1,
-      platformPercent: 1,
       locked: true,
     },
     allowlist: [],
