@@ -13,8 +13,25 @@ const PROCESSING_START = 82;
 const LARGE_UPLOAD_UNAVAILABLE =
   "Large ZIP uploads need a public Vercel Blob store (BLOB_READ_WRITE_TOKEN). In Vercel: Project → Storage → create a Blob store with Public access, connect it, then redeploy.";
 
+const BLOB_QUOTA_EXCEEDED =
+  "Vercel Blob storage is full (1 GB limit on Hobby). In Vercel → Storage → your Blob store → Browse, delete files under collection-uploads/, then try again. Temporary ZIPs are removed automatically after a successful import.";
+
 const PRIVATE_STORE_MISMATCH =
   "Your Vercel Blob store is private, but this app requires a public store for NFT images. Create a new Blob store with Public access in Vercel → Storage, connect it to this project, update BLOB_READ_WRITE_TOKEN, and redeploy.";
+
+function mapBlobUploadError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes("quota exceeded") || message.includes("Storage quota")) {
+    return new Error(BLOB_QUOTA_EXCEEDED);
+  }
+  if (message.includes("client token")) {
+    return new Error(LARGE_UPLOAD_UNAVAILABLE);
+  }
+  if (message.includes("private store") || message.includes("public access")) {
+    return new Error(PRIVATE_STORE_MISMATCH);
+  }
+  return err instanceof Error ? err : new Error(message);
+}
 
 export type UploadProgressCallback = (progress: CollectionUploadProgressState) => void;
 
@@ -73,14 +90,7 @@ export async function uploadCollectionZip(
     emitProgress(onProgress, { phase: "uploading", percent: UPLOAD_PHASE_MAX }, file);
     return { zipUrl: blob.url };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("client token")) {
-      throw new Error(LARGE_UPLOAD_UNAVAILABLE);
-    }
-    if (message.includes("private store") || message.includes("public access")) {
-      throw new Error(PRIVATE_STORE_MISMATCH);
-    }
-    throw err;
+    throw mapBlobUploadError(err);
   }
 }
 

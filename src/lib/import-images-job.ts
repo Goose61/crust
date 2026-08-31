@@ -13,6 +13,7 @@ import {
 import { newId, saveCollection, updateCollection } from "@/lib/store";
 import { type Collection, type GeneratedToken } from "@/lib/types";
 import { buildImportingCollectionStub } from "@/lib/import-collection-stub";
+import { deleteCollectionUploadZip } from "@/lib/blob-cleanup";
 
 const DEFAULT_ROYALTY_BPS = 500;
 const PROGRESS_EVERY = 5;
@@ -141,6 +142,9 @@ export async function runImageImportJob(params: ImageImportParams): Promise<void
     throw err;
   } finally {
     if (tmpZip) await cleanupTempZipFile(tmpZip);
+    await deleteCollectionUploadZip(zipUrl).catch((err) => {
+      console.warn(`[import job ${collectionId}] could not delete source ZIP`, err);
+    });
   }
 }
 
