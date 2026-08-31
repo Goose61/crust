@@ -13,15 +13,17 @@ const nextConfig: NextConfig = {
     // Re-enable ESLint during builds so CI catches real issues
     ignoreDuringBuilds: false,
   },
-  serverExternalPackages: ["sharp", "@irys/upload", "@irys/upload-solana"],
+  serverExternalPackages: ["sharp", "@irys/upload", "@irys/upload-solana", "yauzl"],
 
-  // Serve the static thecrust landing page at the root and legal URLs.
-  // beforeFiles rewrites run BEFORE Next.js matches any pages or static files,
-  // so they take priority over src/app/page.tsx at "/".
+  // Static marketing HTML at / — but never intercept Next.js RSC (?_rsc=) requests.
   async rewrites() {
     return {
       beforeFiles: [
-        { source: "/", destination: "/thecrust/index.html" },
+        {
+          source: "/",
+          missing: [{ type: "query", key: "_rsc" }],
+          destination: "/thecrust/index.html",
+        },
         { source: "/contact", destination: "/thecrust/contact.html" },
         { source: "/terms", destination: "/thecrust/terms.html" },
         { source: "/privacy", destination: "/thecrust/privacy.html" },

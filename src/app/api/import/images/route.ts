@@ -1,7 +1,7 @@
-import { after } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
 import { newId, saveCollection } from "@/lib/store";
 import { rateLimit } from "@/lib/rate-limit";
+import { scheduleBackground } from "@/lib/schedule-background";
 import {
   buildImportingCollectionStub,
   importImagesFromZipSync,
@@ -47,15 +47,15 @@ export async function POST(req: NextRequest) {
       const stub = buildImportingCollectionStub({ id, name, description, creatorWallet });
       await saveCollection(stub);
 
-      after(async () => {
-        await runImageImportJob({
+      scheduleBackground(() =>
+        runImageImportJob({
           collectionId: id,
           zipUrl,
           name,
           description,
           creatorWallet,
-        });
-      });
+        }),
+      );
 
       return NextResponse.json({
         collection: stub,

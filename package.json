@@ -34,6 +34,7 @@
     "@solana/web3.js": "^1.98.4",
     "@types/yauzl": "^3.4.0",
     "@vercel/blob": "^2.8.0",
+    "@vercel/functions": "^3.9.5",
     "aos": "^2.3.4",
     "axios": "^1.19.0",
     "class-variance-authority": "^0.7.1",
