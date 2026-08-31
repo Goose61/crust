@@ -58,6 +58,7 @@ export function middleware(req: NextRequest) {
         "https://api.coingecko.com",
         "https://blob.vercel-storage.com",
         "https://*.public.blob.vercel-storage.com",
+        "https://vercel.com",
         "https://api.iconify.design",
         "https://api.simplesvg.com",
         "https://api.unisvg.com",
