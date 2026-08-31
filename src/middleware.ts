@@ -12,10 +12,10 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith("/api/")) {
     const allowed =
       ALLOWED_ORIGINS.length === 0
-        ? origin                          // dev: echo origin (same-site only)
+        ? origin
         : ALLOWED_ORIGINS.includes(origin)
           ? origin
-          : ALLOWED_ORIGINS[0];          // prod: restrict to allowlist
+          : ALLOWED_ORIGINS[0];
 
     corsHeaders["Access-Control-Allow-Origin"] = allowed;
     corsHeaders["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS";
@@ -37,34 +37,32 @@ export function middleware(req: NextRequest) {
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "img-src 'self' data: blob: https://gateway.irys.xyz https://arweave.net https://blob.vercel-storage.com https://*.datasprite-cdn.com",
-      // Irys upload nodes + Solana RPCs + Jupiter price + blob storage
+      "img-src 'self' data: blob: https://gateway.irys.xyz https://arweave.net https://blob.vercel-storage.com https://*.public.blob.vercel-storage.com https://*.datasprite-cdn.com",
       [
         "connect-src 'self'",
-        // Irys uploader endpoints (mainnet + devnet)
         "https://uploader.irys.xyz",
         "https://devnet.irys.xyz",
         "https://node1.irys.xyz",
         "https://gateway.irys.xyz",
-        // Solana RPC (http + websocket)
         "https://api.devnet.solana.com",
         "https://api.mainnet.solana.com",
         "https://api.mainnet-beta.solana.com",
         "wss://api.devnet.solana.com",
         "wss://api.mainnet.solana.com",
         "wss://api.mainnet-beta.solana.com",
-        // Jupiter price API
         "https://lite-api.jup.ag",
         "https://api.jup.ag",
-        // Arweave gateway
         "https://arweave.net",
-        // SlicePay + CoinGecko + Vercel Blob
         "https://api.slicechain.io",
         "https://pay.slicechain.io",
         "https://api.coingecko.com",
         "https://blob.vercel-storage.com",
+        "https://*.public.blob.vercel-storage.com",
+        "https://api.iconify.design",
+        "https://api.simplesvg.com",
+        "https://api.unisvg.com",
       ].join(" "),
-      "font-src 'self' https://fonts.gstatic.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
       "frame-src https://dexscreener.com https://pay.slicechain.io",
       "frame-ancestors 'none'",
       "base-uri 'self'",
@@ -79,7 +77,6 @@ export function middleware(req: NextRequest) {
   );
   res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 
-  // Attach CORS headers to the real response too
   for (const [k, v] of Object.entries(corsHeaders)) {
     res.headers.set(k, v);
   }

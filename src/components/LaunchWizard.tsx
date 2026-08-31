@@ -13,6 +13,8 @@ import {
 } from "@/lib/types";
 import { tokenImageSrc } from "@/lib/collection-ui";
 import { buildAuthHeaders } from "@/lib/wallet-auth-client";
+import { postImportJson } from "@/lib/upload-collection-zip";
+import { readJsonResponse } from "@/lib/fetch-json";
 import {
   PRIMARY_PLATFORM_FEE_PERCENT,
   PRIMARY_PLATFORM_TOTAL_PERCENT,
@@ -188,12 +190,11 @@ export function LaunchWizard() {
     setBusy(true);
     setError(null);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("name", "My collection");
-      const res = await fetch("/api/import/images", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const data = await postImportJson<{ collection: Collection; error?: string }>(
+        "/api/import/images",
+        file,
+        { name: "My collection" },
+      );
       const col: Collection = {
         ...data.collection,
         traitPricing: defaultTraitPricing(data.collection.tokens),
@@ -213,12 +214,11 @@ export function LaunchWizard() {
     setBusy(true);
     setError(null);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("name", "My collection");
-      const res = await fetch("/api/layers/parse", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const data = await postImportJson<{ collection: Collection; error?: string }>(
+        "/api/layers/parse",
+        file,
+        { name: "My collection" },
+      );
       setCollection(data.collection);
       setMode("layers");
       setStep(0);
@@ -246,7 +246,7 @@ export function LaunchWizard() {
       headers,
       body: JSON.stringify({ ...src, ...patch, action }),
     });
-    const data = await res.json();
+    const data = await readJsonResponse<{ collection: Collection; error?: string }>(res);
     if (!res.ok) throw new Error(data.error || "Save failed");
     setCollection(data.collection);
     return data.collection as Collection;
