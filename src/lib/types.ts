@@ -286,6 +286,8 @@ export type Collection = {
   feeLedger?: FeeLedger;
   /** Ephemeral asset keypair for Phantom-first multi-signer mint flow */
   pendingMint?: PendingMint;
+  /** Blob URL awaiting /api/import/images/process (cleared when import finishes). */
+  pendingZipUrl?: string;
   /** Populated while a large ZIP import runs in the background. */
   importProgress?: ImportProgress;
   createdAt: string;

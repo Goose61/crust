@@ -10,8 +10,9 @@ import {
   readZipTextEntry,
   scanZipArchive,
 } from "@/lib/import-zip-server";
-import { newId, saveCollection, slugify, updateCollection } from "@/lib/store";
-import { defaultPayments, type Collection, type GeneratedToken } from "@/lib/types";
+import { newId, saveCollection, updateCollection } from "@/lib/store";
+import { type Collection, type GeneratedToken } from "@/lib/types";
+import { buildImportingCollectionStub } from "@/lib/import-collection-stub";
 
 const DEFAULT_ROYALTY_BPS = 500;
 const PROGRESS_EVERY = 5;
@@ -23,52 +24,6 @@ export type ImageImportParams = {
   description: string;
   creatorWallet: string;
 };
-
-export function buildImportingCollectionStub(params: {
-  id: string;
-  name: string;
-  description: string;
-  creatorWallet: string;
-}): Collection {
-  const now = new Date().toISOString();
-  return {
-    id: params.id,
-    slug: slugify(params.name),
-    name: params.name,
-    symbol: params.name.slice(0, 6).toUpperCase().replace(/\s/g, ""),
-    description: params.description,
-    nameTemplate: "{name} #{id}",
-    chain: "solana",
-    status: "importing",
-    supply: 0,
-    mintedCount: 0,
-    artPath: "path-a",
-    stackOrder: [],
-    layers: [],
-    blindMint: false,
-    revealTrigger: "manual",
-    revealed: true,
-    royaltyBps: DEFAULT_ROYALTY_BPS,
-    milestones: [{ at: 100, events: ["enable_secondary", "snapshot_holders"] }],
-    payments: defaultPayments({ giftMintEnabled: true, creatorWallet: params.creatorWallet }),
-    fees: {
-      ownerPercent: 98,
-      holdersPercent: 1,
-      buybackPercent: 1,
-      locked: false,
-    },
-    allowlist: [],
-    waitlist: [],
-    publicMintOpen: true,
-    secondaryEnabled: false,
-    holderPageUnlocked: false,
-    irysPublished: false,
-    importProgress: { done: 0, total: 0 },
-    createdAt: now,
-    updatedAt: now,
-    tokens: [],
-  };
-}
 
 async function loadSidecarAttributes(
   zipPath: string,
@@ -164,6 +119,7 @@ export async function runImageImportJob(params: ImageImportParams): Promise<void
       status: "draft",
       supply: ranked.length,
       tokens: ranked,
+      pendingZipUrl: undefined,
       importProgress: undefined,
       updatedAt: new Date().toISOString(),
     }));
@@ -173,6 +129,7 @@ export async function runImageImportJob(params: ImageImportParams): Promise<void
     await updateCollection(collectionId, (current) => ({
       ...current,
       status: "draft",
+      pendingZipUrl: undefined,
       importProgress: {
         done: current.importProgress?.done ?? 0,
         total: current.importProgress?.total ?? 0,

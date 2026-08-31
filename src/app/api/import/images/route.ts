@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { newId, saveCollection } from "@/lib/store";
 import { rateLimit } from "@/lib/rate-limit";
-import { scheduleBackground } from "@/lib/schedule-background";
-import {
-  buildImportingCollectionStub,
-  importImagesFromZipSync,
-  runImageImportJob,
-} from "@/lib/import-images-job";
+import { buildImportingCollectionStub } from "@/lib/import-collection-stub";
 import type { Collection } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+
+export async function GET() {
+  return NextResponse.json({ ok: true, mode: "import-images" });
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -41,21 +40,17 @@ export async function POST(req: NextRequest) {
     const description = String(form.get("description") || "");
     const creatorWallet = String(form.get("creatorWallet") || "");
 
-    // Large ZIPs upload to blob first — process in the background after responding.
+    // Blob ZIP: save a lightweight stub — processing runs in /api/import/images/process.
     if (zipUrl) {
       const id = newId();
-      const stub = buildImportingCollectionStub({ id, name, description, creatorWallet });
+      const stub = buildImportingCollectionStub({
+        id,
+        name,
+        description,
+        creatorWallet,
+        pendingZipUrl: zipUrl,
+      });
       await saveCollection(stub);
-
-      scheduleBackground(() =>
-        runImageImportJob({
-          collectionId: id,
-          zipUrl,
-          name,
-          description,
-          creatorWallet,
-        }),
-      );
 
       return NextResponse.json({
         collection: stub,
@@ -63,6 +58,7 @@ export async function POST(req: NextRequest) {
       } satisfies { collection: Collection; importing: true });
     }
 
+    const { importImagesFromZipSync } = await import("@/lib/import-images-job");
     const collection = await importImagesFromZipSync(form);
     return NextResponse.json({ collection });
   } catch (err) {
