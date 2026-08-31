@@ -3,13 +3,29 @@
 import { readJsonResponse } from "./fetch-json";
 import type { CollectionUploadProgressState } from "@/components/CollectionUploadProgress";
 
-const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
+export const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 
 /** Blob/direct upload maps to 0–80%; server import finishes 80–100%. */
 const UPLOAD_PHASE_MAX = 80;
 const PROCESSING_START = 82;
 
+const LARGE_UPLOAD_UNAVAILABLE =
+  "Large ZIP uploads need Vercel Blob storage (BLOB_READ_WRITE_TOKEN). In Vercel: Project → Storage → connect a Blob store to this project, then redeploy. ZIPs under 4 MB can upload without it.";
+
 export type UploadProgressCallback = (progress: CollectionUploadProgressState) => void;
+
+type BlobUploadStatus = {
+  configured?: boolean;
+  error?: string;
+};
+
+async function assertBlobUploadConfigured(): Promise<void> {
+  const res = await fetch("/api/blob/upload");
+  const status = await readJsonResponse<BlobUploadStatus>(res);
+  if (!status.configured) {
+    throw new Error(status.error ?? LARGE_UPLOAD_UNAVAILABLE);
+  }
+}
 
 function emitProgress(
   onProgress: UploadProgressCallback | undefined,
@@ -32,24 +48,33 @@ export async function uploadCollectionZip(
     return {};
   }
 
+  await assertBlobUploadConfigured();
   emitProgress(onProgress, { phase: "uploading", percent: 2 }, file);
 
   const { upload } = await import("@vercel/blob/client");
   const pathname = `collection-uploads/${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
 
-  const blob = await upload(pathname, file, {
-    access: "public",
-    handleUploadUrl: "/api/blob/upload",
-    contentType: file.type || "application/zip",
-    multipart: file.size > 20 * 1024 * 1024,
-    onUploadProgress: ({ percentage }) => {
-      const scaled = Math.round((percentage / 100) * UPLOAD_PHASE_MAX);
-      emitProgress(onProgress, { phase: "uploading", percent: scaled }, file);
-    },
-  });
+  try {
+    const blob = await upload(pathname, file, {
+      access: "public",
+      handleUploadUrl: "/api/blob/upload",
+      contentType: file.type || "application/zip",
+      multipart: file.size > 20 * 1024 * 1024,
+      onUploadProgress: ({ percentage }) => {
+        const scaled = Math.round((percentage / 100) * UPLOAD_PHASE_MAX);
+        emitProgress(onProgress, { phase: "uploading", percent: scaled }, file);
+      },
+    });
 
-  emitProgress(onProgress, { phase: "uploading", percent: UPLOAD_PHASE_MAX }, file);
-  return { zipUrl: blob.url };
+    emitProgress(onProgress, { phase: "uploading", percent: UPLOAD_PHASE_MAX }, file);
+    return { zipUrl: blob.url };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("client token")) {
+      throw new Error(LARGE_UPLOAD_UNAVAILABLE);
+    }
+    throw err;
+  }
 }
 
 function postFormWithUploadProgress(

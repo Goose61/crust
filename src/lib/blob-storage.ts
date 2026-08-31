@@ -13,7 +13,7 @@ import path from "path";
 import { STAGING_DIR } from "./paths";
 
 function hasBlobToken() {
-  return !!process.env.BLOB_READ_WRITE_TOKEN;
+  return !!process.env.BLOB_READ_WRITE_TOKEN?.trim();
 }
 
 /** Upload a buffer and return a public URL. */
