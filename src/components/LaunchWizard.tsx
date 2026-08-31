@@ -16,6 +16,10 @@ import { buildAuthHeaders } from "@/lib/wallet-auth-client";
 import { postImportJson } from "@/lib/upload-collection-zip";
 import { readJsonResponse } from "@/lib/fetch-json";
 import {
+  CollectionUploadProgressOverlay,
+  type CollectionUploadProgressState,
+} from "@/components/CollectionUploadProgress";
+import {
   PRIMARY_PLATFORM_FEE_PERCENT,
   PRIMARY_PLATFORM_TOTAL_PERCENT,
   PRIMARY_TRADE_TAX_PERCENT,
@@ -117,6 +121,7 @@ export function LaunchWizard() {
   const [mode, setMode] = useState<Mode>(null);
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<CollectionUploadProgressState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [collection, setCollection] = useState<Collection | null>(null);
   const [previews, setPreviews] = useState<
@@ -189,11 +194,18 @@ export function LaunchWizard() {
   async function uploadReadyCollection(file: File) {
     setBusy(true);
     setError(null);
+    setUploadProgress({
+      fileName: file.name,
+      fileSize: file.size,
+      phase: "uploading",
+      percent: 0,
+    });
     try {
       const data = await postImportJson<{ collection: Collection; error?: string }>(
         "/api/import/images",
         file,
         { name: "My collection" },
+        setUploadProgress,
       );
       const col: Collection = {
         ...data.collection,
@@ -205,6 +217,7 @@ export function LaunchWizard() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
+      setUploadProgress(null);
       setBusy(false);
     }
   }
@@ -213,11 +226,18 @@ export function LaunchWizard() {
   async function uploadLayers(file: File) {
     setBusy(true);
     setError(null);
+    setUploadProgress({
+      fileName: file.name,
+      fileSize: file.size,
+      phase: "uploading",
+      percent: 0,
+    });
     try {
       const data = await postImportJson<{ collection: Collection; error?: string }>(
         "/api/layers/parse",
         file,
         { name: "My collection" },
+        setUploadProgress,
       );
       setCollection(data.collection);
       setMode("layers");
@@ -225,11 +245,10 @@ export function LaunchWizard() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
+      setUploadProgress(null);
       setBusy(false);
     }
   }
-
-  /* ── save / patch collection ── */
   async function save(patch: Partial<Collection> = {}, action?: string, base?: Collection) {
     const src = base ?? collection;
     if (!src) return src;
@@ -404,7 +423,9 @@ export function LaunchWizard() {
   /* ─────────────────────── LANDING ─────────────────────── */
   if (!mode) {
     return (
-      <div className="container mx-auto max-w-4xl px-4 py-12">
+      <>
+        {uploadProgress && <CollectionUploadProgressOverlay {...uploadProgress} />}
+        <div className="container mx-auto max-w-4xl px-4 py-12">
         <h1 className="text-3xl font-bold text-white">Launch a collection</h1>
         <p className="mt-2 text-sm text-white/60">
           Choose how your art is coming in. Both options write permanent on-chain metadata,
@@ -480,6 +501,7 @@ export function LaunchWizard() {
           </div>
         </div>
       </div>
+      </>
     );
   }
 

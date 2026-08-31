@@ -1,13 +1,38 @@
 /** Upload a collection ZIP — uses Vercel Blob client for files >4MB (serverless body limit). */
 
 import { readJsonResponse } from "./fetch-json";
+import type { CollectionUploadProgressState } from "@/components/CollectionUploadProgress";
 
 const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 
-export async function uploadCollectionZip(file: File): Promise<{ zipUrl?: string }> {
+/** Blob/direct upload maps to 0–80%; server import finishes 80–100%. */
+const UPLOAD_PHASE_MAX = 80;
+const PROCESSING_START = 82;
+
+export type UploadProgressCallback = (progress: CollectionUploadProgressState) => void;
+
+function emitProgress(
+  onProgress: UploadProgressCallback | undefined,
+  partial: Omit<CollectionUploadProgressState, "fileName" | "fileSize">,
+  file: File,
+) {
+  onProgress?.({
+    fileName: file.name,
+    fileSize: file.size,
+    ...partial,
+  });
+}
+
+export async function uploadCollectionZip(
+  file: File,
+  onProgress?: UploadProgressCallback,
+): Promise<{ zipUrl?: string }> {
   if (file.size <= DIRECT_UPLOAD_MAX_BYTES) {
+    emitProgress(onProgress, { phase: "uploading", percent: 5 }, file);
     return {};
   }
+
+  emitProgress(onProgress, { phase: "uploading", percent: 2 }, file);
 
   const { upload } = await import("@vercel/blob/client");
   const pathname = `collection-uploads/${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
@@ -16,17 +41,57 @@ export async function uploadCollectionZip(file: File): Promise<{ zipUrl?: string
     access: "public",
     handleUploadUrl: "/api/blob/upload",
     contentType: file.type || "application/zip",
+    multipart: file.size > 20 * 1024 * 1024,
+    onUploadProgress: ({ percentage }) => {
+      const scaled = Math.round((percentage / 100) * UPLOAD_PHASE_MAX);
+      emitProgress(onProgress, { phase: "uploading", percent: scaled }, file);
+    },
   });
 
+  emitProgress(onProgress, { phase: "uploading", percent: UPLOAD_PHASE_MAX }, file);
   return { zipUrl: blob.url };
+}
+
+function postFormWithUploadProgress(
+  endpoint: string,
+  form: FormData,
+  file: File,
+  onProgress?: UploadProgressCallback,
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", endpoint);
+    xhr.responseType = "text";
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const scaled = Math.round((event.loaded / event.total) * UPLOAD_PHASE_MAX);
+      emitProgress(onProgress, { phase: "uploading", percent: scaled }, file);
+    };
+
+    xhr.onload = () => {
+      resolve(
+        new Response(xhr.responseText, {
+          status: xhr.status,
+          statusText: xhr.statusText,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    };
+
+    xhr.onerror = () => reject(new Error("Network error during ZIP upload"));
+    xhr.onabort = () => reject(new Error("ZIP upload cancelled"));
+    xhr.send(form);
+  });
 }
 
 export async function postImportForm(
   endpoint: "/api/import/images" | "/api/layers/parse",
   file: File,
   fields: Record<string, string>,
+  onProgress?: UploadProgressCallback,
 ): Promise<Response> {
-  const { zipUrl } = await uploadCollectionZip(file);
+  const { zipUrl } = await uploadCollectionZip(file, onProgress);
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) {
     form.set(key, value);
@@ -36,19 +101,25 @@ export async function postImportForm(
     form.set("zipUrl", zipUrl);
     form.set("fileName", file.name);
     form.set("fileSize", String(file.size));
-  } else {
-    form.set("file", file);
+    emitProgress(onProgress, { phase: "processing", percent: PROCESSING_START }, file);
+    return fetch(endpoint, { method: "POST", body: form });
   }
 
-  return fetch(endpoint, { method: "POST", body: form });
+  form.set("file", file);
+  emitProgress(onProgress, { phase: "uploading", percent: 0 }, file);
+  const res = await postFormWithUploadProgress(endpoint, form, file, onProgress);
+  emitProgress(onProgress, { phase: "processing", percent: PROCESSING_START }, file);
+  return res;
 }
 
 export async function postImportJson<T>(
   endpoint: "/api/import/images" | "/api/layers/parse",
   file: File,
   fields: Record<string, string>,
+  onProgress?: UploadProgressCallback,
 ): Promise<T> {
-  const res = await postImportForm(endpoint, file, fields);
+  emitProgress(onProgress, { phase: "uploading", percent: 0 }, file);
+  const res = await postImportForm(endpoint, file, fields, onProgress);
   const data = await readJsonResponse<T & { error?: string }>(res);
   if (!res.ok) {
     throw new Error(
@@ -57,5 +128,6 @@ export async function postImportJson<T>(
         : `Upload failed (HTTP ${res.status})`,
     );
   }
+  emitProgress(onProgress, { phase: "processing", percent: 100 }, file);
   return data;
 }
