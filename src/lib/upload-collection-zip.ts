@@ -144,6 +144,18 @@ export async function postImportForm(
   return res;
 }
 
+async function startImportProcess(collectionId: string): Promise<void> {
+  const res = await fetch("/api/import/images/process", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ collectionId }),
+  });
+  const data = await readJsonResponse<{ error?: string; started?: boolean }>(res);
+  if (!res.ok && res.status !== 202) {
+    throw new Error(data.error ?? `Import process failed (HTTP ${res.status})`);
+  }
+}
+
 async function pollImportUntilReady(
   collectionId: string,
   file: File,
@@ -217,13 +229,7 @@ export async function postImportJson<T>(
     data.importing &&
     data.collection?.id
   ) {
-    void fetch("/api/import/images/process", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ collectionId: data.collection.id }),
-    }).catch((err) => {
-      console.error("Failed to start import process:", err);
-    });
+    await startImportProcess(data.collection.id);
 
     const collection = await pollImportUntilReady(data.collection.id, file, onProgress);
     return { ...data, collection } as T;

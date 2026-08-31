@@ -1,5 +1,5 @@
 import path from "path";
-import { assignRarityRanks } from "@/lib/compositor";
+import { assignRarityRanks } from "@/lib/rarity";
 import { uploadBlob, uploadBlobText } from "@/lib/blob-storage";
 import { blobImagePath, blobMetadataPath } from "@/lib/paths";
 import { buildTokenMetadataJson } from "@/lib/metadata-builders";

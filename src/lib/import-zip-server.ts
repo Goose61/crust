@@ -1,4 +1,7 @@
-import { mkdtemp, rm, unlink, writeFile } from "fs/promises";
+import { createWriteStream } from "fs";
+import { pipeline } from "stream/promises";
+import { Readable } from "stream";
+import { mkdtemp, rm, unlink } from "fs/promises";
 import os from "os";
 import path from "path";
 import JSZip from "jszip";
@@ -13,25 +16,38 @@ export async function downloadZipToTempFile(zipUrl: string): Promise<string> {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "zip-import-"));
   const tmpPath = path.join(tmpDir, "upload.zip");
 
-  if (isBlobZipUrl(zipUrl)) {
-    const { get } = await import("@vercel/blob");
-    const result = await get(zipUrl, { access: "public" });
-    if (!result?.stream) {
-      await rm(tmpDir, { recursive: true, force: true });
-      throw new Error("Uploaded ZIP not found in blob storage — try uploading again.");
-    }
-    const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
-    await writeFile(tmpPath, buffer);
-    return tmpPath;
+  async function streamToFile(body: ReadableStream<Uint8Array> | NodeJS.ReadableStream) {
+    const nodeStream =
+      body instanceof Readable
+        ? body
+        : Readable.fromWeb(body as unknown as import("stream/web").ReadableStream);
+    await pipeline(nodeStream, createWriteStream(tmpPath));
   }
 
-  const res = await fetch(zipUrl);
-  if (!res.ok) {
+  try {
+    if (isBlobZipUrl(zipUrl)) {
+      const { get } = await import("@vercel/blob");
+      const result = await get(zipUrl, { access: "public" });
+      if (!result?.stream) {
+        throw new Error("Uploaded ZIP not found in blob storage — try uploading again.");
+      }
+      await streamToFile(result.stream);
+      return tmpPath;
+    }
+
+    const res = await fetch(zipUrl);
+    if (!res.ok) {
+      throw new Error(`Could not download uploaded ZIP (HTTP ${res.status})`);
+    }
+    if (!res.body) {
+      throw new Error("Could not download uploaded ZIP (empty response body)");
+    }
+    await streamToFile(res.body);
+    return tmpPath;
+  } catch (err) {
     await rm(tmpDir, { recursive: true, force: true });
-    throw new Error(`Could not download uploaded ZIP (HTTP ${res.status})`);
+    throw err;
   }
-  await writeFile(tmpPath, Buffer.from(await res.arrayBuffer()));
-  return tmpPath;
 }
 
 export async function cleanupTempZipFile(tmpPath: string): Promise<void> {
@@ -135,18 +151,64 @@ export async function readZipTextEntry(zipPath: string, targetName: string): Pro
   return buf ? buf.toString("utf8") : null;
 }
 
-/** Read images one at a time — keeps memory flat for large collections. */
+/** Read images one at a time — single ZIP pass, flat memory for large collections. */
 export async function readZipImagesSequential(
   zipPath: string,
   images: ZipImageEntry[],
   onImage: (fileName: string, buffer: Buffer, index: number) => Promise<void>,
 ): Promise<void> {
-  for (let i = 0; i < images.length; i++) {
-    const image = images[i];
-    const buffer = await readZipEntryByPath(zipPath, image.fileName);
-    if (!buffer) throw new Error(`Missing image in ZIP: ${image.fileName}`);
-    await onImage(image.fileName, buffer, i);
-  }
+  const wanted = new Map(
+    images.map((entry, index) => [entry.fileName.replace(/\\/g, "/"), index]),
+  );
+  let remaining = images.length;
+  const zipfile = await openZip(zipPath);
+
+  await new Promise<void>((resolve, reject) => {
+    const readNext = () => {
+      zipfile.readEntry();
+    };
+
+    zipfile.on("entry", (entry) => {
+      const name = entry.fileName.replace(/\\/g, "/");
+      const index = wanted.get(name);
+      if (index === undefined) {
+        readNext();
+        return;
+      }
+
+      readEntryBuffer(zipfile, entry)
+        .then(async (buffer) => {
+          await onImage(name, buffer, index);
+          remaining -= 1;
+          if (remaining === 0) {
+            zipfile.close();
+            resolve();
+            return;
+          }
+          readNext();
+        })
+        .catch((err) => {
+          zipfile.close();
+          reject(err);
+        });
+    });
+
+    zipfile.on("end", () => {
+      zipfile.close();
+      if (remaining > 0) {
+        reject(new Error(`Missing ${remaining} image(s) in ZIP`));
+      } else {
+        resolve();
+      }
+    });
+
+    zipfile.on("error", (err) => {
+      zipfile.close();
+      reject(err);
+    });
+
+    readNext();
+  });
 }
 
 /** Read full ZIP into memory — used by layer parse (smaller archives). */

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getCollection } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-/** Heavy ZIP → images import — separate invocation with a 5-minute budget. */
+/** Heavy ZIP → images import — returns immediately; job runs for up to 5 minutes. */
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as { collectionId?: string };
@@ -25,16 +26,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, alreadyDone: true });
     }
 
-    const { runImageImportJob } = await import("@/lib/import-images-job");
-    await runImageImportJob({
+    const jobParams = {
       collectionId,
       zipUrl: collection.pendingZipUrl,
       name: collection.name,
       description: collection.description,
       creatorWallet: collection.payments.creatorWallet ?? "",
-    });
+    };
 
-    return NextResponse.json({ ok: true });
+    waitUntil(
+      import("@/lib/import-images-job")
+        .then(({ runImageImportJob }) => runImageImportJob(jobParams))
+        .catch((err) => {
+          console.error(`[import job ${collectionId}] background failure`, err);
+        }),
+    );
+
+    return NextResponse.json({ ok: true, started: true }, { status: 202 });
   } catch (err) {
     console.error("[POST /api/import/images/process]", err);
     const message = err instanceof Error ? err.message : "Import processing failed";
