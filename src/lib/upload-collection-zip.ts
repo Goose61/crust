@@ -2,6 +2,7 @@
 
 import { readJsonResponse } from "./fetch-json";
 import type { CollectionUploadProgressState } from "@/components/CollectionUploadProgress";
+import type { Collection } from "@/lib/types";
 
 export const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 
@@ -143,6 +144,55 @@ export async function postImportForm(
   return res;
 }
 
+async function pollImportUntilReady(
+  collectionId: string,
+  file: File,
+  onProgress?: UploadProgressCallback,
+): Promise<Collection> {
+  const started = Date.now();
+  const maxMs = 25 * 60 * 1000;
+
+  while (Date.now() - started < maxMs) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const res = await fetch(`/api/collections/${collectionId}`);
+    const data = await readJsonResponse<{ collection: Collection; error?: string }>(res);
+    if (!res.ok) {
+      throw new Error(data.error ?? "Failed to check import status");
+    }
+
+    const collection = data.collection;
+    if (collection.importProgress?.error) {
+      throw new Error(collection.importProgress.error);
+    }
+
+    if (collection.status === "draft" && collection.tokens.length > 0) {
+      emitProgress(onProgress, { phase: "processing", percent: 100 }, file);
+      return collection;
+    }
+
+    if (collection.status === "importing" && collection.importProgress) {
+      const { done, total } = collection.importProgress;
+      const pct =
+        total > 0
+          ? PROCESSING_START + Math.round((done / total) * (100 - PROCESSING_START))
+          : PROCESSING_START;
+      emitProgress(
+        onProgress,
+        {
+          phase: "processing",
+          percent: pct,
+          detail: total > 0 ? `${done} / ${total}` : undefined,
+        },
+        file,
+      );
+    }
+  }
+
+  throw new Error(
+    "Import is still running — check your dashboard in a minute or try again if it failed.",
+  );
+}
+
 export async function postImportJson<T>(
   endpoint: "/api/import/images" | "/api/layers/parse",
   file: File,
@@ -151,7 +201,9 @@ export async function postImportJson<T>(
 ): Promise<T> {
   emitProgress(onProgress, { phase: "uploading", percent: 0 }, file);
   const res = await postImportForm(endpoint, file, fields, onProgress);
-  const data = await readJsonResponse<T & { error?: string }>(res);
+  const data = await readJsonResponse<
+    T & { error?: string; importing?: boolean; collection?: Collection }
+  >(res);
   if (!res.ok) {
     throw new Error(
       typeof data === "object" && data && "error" in data && data.error
@@ -159,6 +211,16 @@ export async function postImportJson<T>(
         : `Upload failed (HTTP ${res.status})`,
     );
   }
+
+  if (
+    endpoint === "/api/import/images" &&
+    data.importing &&
+    data.collection?.id
+  ) {
+    const collection = await pollImportUntilReady(data.collection.id, file, onProgress);
+    return { ...data, collection } as T;
+  }
+
   emitProgress(onProgress, { phase: "processing", percent: 100 }, file);
   return data;
 }

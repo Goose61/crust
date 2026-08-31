@@ -7,6 +7,7 @@ export type CollectionUploadProgressState = {
   fileSize: number;
   phase: CollectionUploadPhase;
   percent: number;
+  detail?: string;
 };
 
 function formatBytes(bytes: number): string {
@@ -20,12 +21,15 @@ export function CollectionUploadProgressOverlay({
   fileSize,
   phase,
   percent,
+  detail,
 }: CollectionUploadProgressState) {
   const clamped = Math.max(0, Math.min(100, percent));
   const phaseLabel =
     phase === "uploading"
       ? "Uploading ZIP to storage…"
-      : "Processing images & writing metadata…";
+      : detail
+        ? `Processing images (${detail})…`
+        : "Processing images & writing metadata…";
 
   return (
     <div

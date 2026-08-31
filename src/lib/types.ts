@@ -1,6 +1,12 @@
 export type ChainKey = "solana" | "ethereum" | "base" | "polygon";
 
-export type CollectionStatus = "draft" | "live" | "sold_out" | "archived";
+export type CollectionStatus = "draft" | "importing" | "live" | "sold_out" | "archived";
+
+export type ImportProgress = {
+  done: number;
+  total: number;
+  error?: string;
+};
 
 export type RevealTrigger =
   | "at_percent"
@@ -280,6 +286,8 @@ export type Collection = {
   feeLedger?: FeeLedger;
   /** Ephemeral asset keypair for Phantom-first multi-signer mint flow */
   pendingMint?: PendingMint;
+  /** Populated while a large ZIP import runs in the background. */
+  importProgress?: ImportProgress;
   createdAt: string;
   updatedAt: string;
   tokens: GeneratedToken[];
