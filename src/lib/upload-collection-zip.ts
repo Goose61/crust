@@ -35,6 +35,11 @@ function mapBlobUploadError(err: unknown): Error {
 
 export type UploadProgressCallback = (progress: CollectionUploadProgressState) => void;
 
+export type PostImportOptions = {
+  /** Fires when the server creates a collection stub (before background import finishes). */
+  onCollectionCreated?: (collection: Collection) => void;
+};
+
 type BlobUploadStatus = {
   configured?: boolean;
   error?: string;
@@ -233,6 +238,7 @@ export async function postImportJson<T>(
   fields: Record<string, string>,
   onProgress?: UploadProgressCallback,
   authHeaders?: Record<string, string>,
+  options?: PostImportOptions,
 ): Promise<T> {
   emitProgress(onProgress, { phase: "uploading", percent: 0 }, file);
   const res = await postImportForm(endpoint, file, fields, onProgress, authHeaders);
@@ -252,6 +258,7 @@ export async function postImportJson<T>(
     data.importing &&
     data.collection?.id
   ) {
+    options?.onCollectionCreated?.(data.collection);
     await startImportProcess(data.collection.id, authHeaders);
 
     const collection = await pollImportUntilReady(data.collection.id, file, onProgress);

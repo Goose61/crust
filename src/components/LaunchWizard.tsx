@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   MILESTONE_EVENTS,
@@ -35,6 +36,12 @@ import {
   metadataReviewBlocksLaunch,
   reviewCollectionMetadata,
 } from "@/lib/metadata-review";
+import {
+  buildInitialLaunchDraft,
+  isContinuableLaunch,
+  rememberLaunchDraft,
+  readRememberedLaunchDraft,
+} from "@/lib/launch-resume";
 import { useWallet } from "./WalletProvider";
 
 /* ─── steps ─── */
@@ -175,6 +182,10 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [allowlistText, setAllowlistText] = useState("");
   const [allowlistMsg, setAllowlistMsg] = useState<string | null>(null);
+  const [savedDrafts, setSavedDrafts] = useState<Collection[]>([]);
+  const [draftsLoading, setDraftsLoading] = useState(false);
+
+  const uploadInProgressRef = useRef(false);
 
   const STEPS = mode ? wizardSteps(mode) : [];
 
@@ -253,8 +264,42 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     setCollection(withPricing);
   }
 
+  async function bindLaunchSession(
+    col: Collection,
+    launchMode: "ready" | "layers",
+    nextStep = 0,
+  ): Promise<Collection> {
+    if (!publicKey) return col;
+    rememberLaunchDraft(publicKey, col.id);
+    router.replace(`/launch?id=${col.id}`, { scroll: false });
+
+    const initial = buildInitialLaunchDraft(launchMode, col.royaltyBps ?? royaltyBps);
+    try {
+      const saved = await save(
+        {
+          payments: { ...col.payments, creatorWallet: col.payments.creatorWallet || publicKey },
+          royaltyBps: col.royaltyBps ?? royaltyBps,
+          launchDraft: {
+            ...initial,
+            step: nextStep,
+            royaltySplit,
+            royaltyOwner,
+            royaltyHolders,
+            royaltyBuyback,
+          },
+        },
+        undefined,
+        col,
+      );
+      return saved ?? col;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save launch progress");
+      return col;
+    }
+  }
+
   useEffect(() => {
-    if (!resumeId) return;
+    if (!resumeId || mode || uploadInProgressRef.current) return;
     let cancelled = false;
 
     async function loadResume() {
@@ -311,7 +356,39 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [resumeId, publicKey, router]);
+  }, [resumeId, publicKey, router, mode]);
+
+  useEffect(() => {
+    if (resumeId || mode || !publicKey) {
+      setSavedDrafts([]);
+      return;
+    }
+    const wallet = publicKey;
+    let cancelled = false;
+
+    async function loadDrafts() {
+      setDraftsLoading(true);
+      try {
+        const headers = await buildAuthHeaders(wallet);
+        const res = await fetch("/api/collections", { headers });
+        const data = await readJsonResponse<{ collections: Collection[] }>(res);
+        if (cancelled) return;
+        const mine = (data.collections ?? []).filter(
+          (c) => c.payments.creatorWallet === wallet && isContinuableLaunch(c),
+        );
+        setSavedDrafts(mine);
+      } catch {
+        if (!cancelled) setSavedDrafts([]);
+      } finally {
+        if (!cancelled) setDraftsLoading(false);
+      }
+    }
+
+    void loadDrafts();
+    return () => {
+      cancelled = true;
+    };
+  }, [resumeId, mode, publicKey]);
 
   async function authHeadersForUpload() {
     if (!publicKey) {
@@ -323,6 +400,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
   /* ── upload finished-images ZIP ── */
   async function uploadReadyCollection(file: File) {
+    uploadInProgressRef.current = true;
     setBusy(true);
     setError(null);
     setUploadProgress({
@@ -339,6 +417,11 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         { name: "My collection", creatorWallet: publicKey ?? "" },
         setUploadProgress,
         headers,
+        {
+          onCollectionCreated: (stub) => {
+            void bindLaunchSession(stub, "ready", 0);
+          },
+        },
       );
       const col: Collection = {
         ...data.collection,
@@ -348,9 +431,11 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       setMode("ready");
       setRoyaltyBps(col.royaltyBps ?? 500);
       setStep(0);
+      await bindLaunchSession(col, "ready", 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
+      uploadInProgressRef.current = false;
       setUploadProgress(null);
       setBusy(false);
     }
@@ -358,6 +443,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
   /* ── upload trait-layer ZIP ── */
   async function uploadLayers(file: File) {
+    uploadInProgressRef.current = true;
     setBusy(true);
     setError(null);
     setUploadProgress({
@@ -374,13 +460,20 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         { name: "My collection", creatorWallet: publicKey ?? "" },
         setUploadProgress,
         headers,
+        {
+          onCollectionCreated: (stub) => {
+            void bindLaunchSession(stub, "layers", 0);
+          },
+        },
       );
       setCollection(data.collection);
       setMode("layers");
       setStep(0);
+      await bindLaunchSession(data.collection, "layers", 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
+      uploadInProgressRef.current = false;
       setUploadProgress(null);
       setBusy(false);
     }
@@ -661,6 +754,69 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           </button>
         )}
 
+        {publicKey && (savedDrafts.length > 0 || draftsLoading) && (
+          <div className="mt-8 rounded-2xl border border-primary/30 bg-primary/5 p-5">
+            <h2 className="text-lg font-semibold text-white">Continue a saved launch</h2>
+            <p className="mt-1 text-sm text-white/60">
+              Your wallet has in-progress collections. Pick up where you left off — progress is
+              saved automatically after upload.
+            </p>
+            {draftsLoading ? (
+              <p className="mt-4 text-sm text-white/50">Loading saved launches…</p>
+            ) : (
+              <ul className="mt-4 space-y-3">
+                {savedDrafts.map((c) => {
+                  const isRecent =
+                    publicKey && readRememberedLaunchDraft(publicKey) === c.id;
+                  const stepLabel =
+                    c.launchDraft?.step != null && c.launchDraft.mode
+                      ? wizardSteps(c.launchDraft.mode)[c.launchDraft.step]
+                      : c.status === "importing"
+                        ? "Importing"
+                        : "Metadata";
+                  return (
+                    <li
+                      key={c.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3"
+                    >
+                      <div>
+                        <div className="font-medium text-white">
+                          {c.name || "Untitled collection"}
+                          {isRecent && (
+                            <span className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 text-xs text-primary">
+                              Last session
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-white/50">
+                          {c.status === "importing"
+                            ? c.importProgress
+                              ? `Importing ${c.importProgress.done}/${c.importProgress.total}`
+                              : "Importing…"
+                            : `${c.tokens.length} items · step: ${stepLabel}`}
+                        </div>
+                      </div>
+                      <Link
+                        href={`/launch?id=${c.id}`}
+                        className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white"
+                      >
+                        Continue
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <p className="mt-4 text-xs text-white/40">
+              All drafts are also listed on your{" "}
+              <Link href="/dashboard" className="text-primary hover:underline">
+                creator dashboard
+              </Link>
+              .
+            </p>
+          </div>
+        )}
+
         <div className="mt-10 grid gap-6 md:grid-cols-2">
           {/* Finished art */}
           <div className="flex flex-col rounded-2xl border border-white/15 bg-white/5 p-6">
@@ -734,8 +890,14 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       <div className="flex items-center gap-3">
         <button
           onClick={() => {
-            setMode(null); setCollection(null); setStep(0);
-            setError(null); setPreviews([]); setLogoFile(null); setLogoPreview(null);
+            router.replace("/launch");
+            setMode(null);
+            setCollection(null);
+            setStep(0);
+            setError(null);
+            setPreviews([]);
+            setLogoFile(null);
+            setLogoPreview(null);
           }}
           className="text-sm text-white/40 hover:text-white"
         >
