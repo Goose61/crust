@@ -196,11 +196,11 @@ export default function GiftPage() {
     balanceCheck !== null && !balanceCheck.sufficient && !balanceLoading;
 
   const stageLabel: Record<typeof stage, string> = {
-    idle: publicKey ? "Send gift" : "Connect Phantom",
-    storage: "Approve storage payment in Phantom…",
+    idle: publicKey ? "Send gift" : "Connect wallet",
+    storage: "Approve storage payment in your wallet…",
     uploading: "Uploading to Arweave — waiting for confirmation (up to 2 min)…",
     building: "Preparing mint transaction…",
-    minting: "Approve mint in Phantom…",
+    minting: "Approve mint in your wallet…",
     confirming: "Confirming on-chain…",
   };
 
@@ -210,7 +210,7 @@ export default function GiftPage() {
     if (!recipient.trim()) { setError("Enter the recipient wallet address."); return; }
     if (!publicKey) {
       try { await connect(); } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not connect Phantom.");
+        setError(err instanceof Error ? err.message : "Could not connect wallet.");
       }
       return;
     }
@@ -324,10 +324,10 @@ export default function GiftPage() {
       const raw = err instanceof Error ? err.message : "Something went wrong";
       const msg =
         raw.toLowerCase().includes("rejected") || raw.toLowerCase().includes("cancel")
-          ? "Request cancelled in Phantom."
+          ? "Request cancelled in your wallet."
           : raw.toLowerCase().includes("could not be read") ||
               raw.toLowerCase().includes("permission")
-            ? "Image file could not be read. Choose the image again and approve Phantom without switching apps."
+            ? "Image file could not be read. Choose the image again and approve in your wallet without switching apps."
             : raw;
       setError(msg);
       setStage("idle");
@@ -445,7 +445,7 @@ export default function GiftPage() {
       {!publicKey && (
         <div className="mt-4 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-white/80">
-            Connect your Phantom wallet first — then fill out the form below.
+            Connect your wallet first — then fill out the form below.
           </p>
           <button
             type="button"
@@ -453,13 +453,13 @@ export default function GiftPage() {
             disabled={connecting}
             className="shrink-0 rounded-full bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary/80 disabled:opacity-50"
           >
-            {connecting ? "Connecting…" : "Connect Phantom"}
+            {connecting ? "Connecting…" : "Connect wallet"}
           </button>
         </div>
       )}
 
       <div className="mt-4 rounded border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60 space-y-1">
-        <p className="font-medium text-white/80">What Phantom will ask you to approve</p>
+        <p className="font-medium text-white/80">What your wallet will ask you to approve</p>
         <p>1. <span className="text-white">Storage payment</span> — funds permanent Arweave upload (one Solana transaction)</p>
         <p>2. <span className="text-white">Mint transaction</span> — creates the NFT on-chain and sends it to the recipient</p>
         <p className="text-white/40 pt-1">Upload steps may also show message signature prompts (no extra SOL).</p>

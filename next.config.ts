@@ -14,6 +14,13 @@ const nextConfig: NextConfig = {
     ignoreDuringBuilds: false,
   },
   serverExternalPackages: ["sharp", "@irys/upload", "@irys/upload-solana", "yauzl"],
+  transpilePackages: [
+    "@solana/wallet-adapter-base",
+    "@solana/wallet-adapter-react",
+    "@solana/wallet-adapter-phantom",
+    "@solana/wallet-adapter-solflare",
+    "@metamask/connect-solana",
+  ],
 
   // Static marketing HTML at / — but never intercept Next.js RSC (?_rsc=) requests.
   async rewrites() {

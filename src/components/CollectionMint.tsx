@@ -199,7 +199,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         if (data.collection) setCollection(data.collection);
       }
 
-      setMessage("Approve the mint in Phantom…");
+      setMessage("Approve the mint in your wallet…");
       const txSignature = await signMintTx(col.id, networkName());
 
       const confirmEndpoint = isGiftBundle(col)
@@ -220,7 +220,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
       if (!confirm.ok) throw new Error(confirmed.error ?? "Could not confirm mint");
 
       if (confirmed.collection) setCollection(confirmed.collection);
-      setMessage("Minted on-chain! Check Phantom or Solana Explorer.");
+        setMessage("Minted on-chain! Check your wallet or Solana Explorer.");
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Mint failed");
     } finally {
@@ -500,7 +500,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
             </p>
             <p className="text-xs text-amber-200/70 mt-0.5">
               Metadata is stored permanently, but the Solana NFT still needs to be minted.
-              Connect Phantom as the payer and approve the transaction (~0.002 SOL rent + fees).
+            Connect your wallet as the payer and approve the transaction (~0.002 SOL rent + fees).
             </p>
           </div>
           <button

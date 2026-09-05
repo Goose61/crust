@@ -1,8 +1,5 @@
 /** Phantom browse deeplink — opens this page inside Phantom's in-app browser. */
-export function buildPhantomBrowseUrl(pageUrl: string): string {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  return `https://phantom.app/ul/browse/${encodeURIComponent(pageUrl)}?ref=${encodeURIComponent(origin)}`;
-}
+export { buildPhantomBrowseUrl } from "@/lib/connect-wallets";
 
 export function isMobileDevice(): boolean {
   if (typeof navigator === "undefined") return false;

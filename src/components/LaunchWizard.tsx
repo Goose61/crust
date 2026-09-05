@@ -316,7 +316,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   async function authHeadersForUpload() {
     if (!publicKey) {
       await connect();
-      throw new Error("Connect Phantom to save this launch to your wallet");
+      throw new Error("Connect a wallet to save this launch to your wallet");
     }
     return buildAuthHeaders(publicKey);
   }
@@ -393,7 +393,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       try {
         Object.assign(headers, await buildAuthHeaders(publicKey));
       } catch (e) {
-        throw new Error(e instanceof Error ? e.message : "Sign in with Phantom to save");
+        throw new Error(e instanceof Error ? e.message : "Sign in with your wallet to save");
       }
     }
     const res = await fetch("/api/collections", {

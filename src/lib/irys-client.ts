@@ -18,6 +18,7 @@ import {
   isDevnetNetwork,
   type SolanaNetwork,
 } from "./solana-config";
+import { getActiveWallet } from "./wallet-session";
 
 export { IRYS_GATEWAY };
 
@@ -224,7 +225,7 @@ async function fundIrysAccount(params: {
 
 /** Minimal adapter for Irys upload message signing (not used for funding). */
 export function phantomToIrysWallet(phantom: PhantomLike) {
-  if (!phantom.publicKey) throw new Error("Connect Phantom first.");
+  if (!phantom.publicKey) throw new Error("Connect a wallet first.");
   return {
     publicKey: phantom.publicKey,
     sendTransaction: async () => {
@@ -239,9 +240,11 @@ export function phantomToIrysWallet(phantom: PhantomLike) {
 
 export function getPhantomProvider(): PhantomLike | null {
   if (typeof window === "undefined") return null;
+  const active = getActiveWallet();
+  if (active) return active;
   const w = window as unknown as { solana?: PhantomLike; phantom?: { solana?: PhantomLike } };
   const p = w.solana?.isPhantom ? w.solana : w.phantom?.solana ?? w.solana ?? null;
-  return p?.isPhantom ? p : null;
+  return p ?? null;
 }
 
 type IrysInstance = {
@@ -258,7 +261,7 @@ export async function createPhantomIrysUploader(
   network: SolanaNetwork,
 ): Promise<IrysInstance> {
   const phantom = getPhantomProvider();
-  if (!phantom) throw new Error("Phantom wallet is required. Install it from phantom.app.");
+  if (!phantom) throw new Error("A Solana wallet is required. Connect Phantom, Solflare, Backpack, or MetaMask.");
 
   const devnet = isDevnetNetwork(network);
   const rpcUrl = getRpcUrl(network);
@@ -328,7 +331,7 @@ export async function uploadGiftWithPhantom(params: {
   const network = params.network ?? (await getClientNetwork());
   const confirmRpc = getRpcUrl(network);
   const phantom = getPhantomProvider();
-  if (!phantom?.publicKey) throw new Error("Connect Phantom first.");
+  if (!phantom?.publicKey) throw new Error("Connect a wallet first.");
 
   const irys = await createPhantomIrysUploader(network);
 

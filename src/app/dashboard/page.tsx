@@ -25,7 +25,7 @@ export default function DashboardPage() {
           Object.assign(headers, await buildAuthHeaders(publicKey));
         } catch (e) {
           if (!cancelled) {
-            setLoadError(e instanceof Error ? e.message : "Sign in with Phantom to load drafts");
+            setLoadError(e instanceof Error ? e.message : "Sign in with your wallet to load drafts");
           }
           return;
         }

@@ -5,6 +5,7 @@ import Header from "@/components/Layout/Header";
 import Footer from "@/components/Layout/Footer";
 import ScrollToTop from "@/components/ScrollToTop";
 import Aoscompo from "@/utils/aos";
+import { SolanaAdapterProvider } from "@/components/SolanaAdapterProvider";
 import { WalletProvider } from "@/components/WalletProvider";
 
 const display = Bricolage_Grotesque({
@@ -39,17 +40,19 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${display.variable} ${body.variable} ${mono.variable} font-[family-name:var(--font-body)]`}>
-        <WalletProvider>
-          <div className="flour" aria-hidden />
-          <Header />
-          <div className="relative z-[2]">
-            <Aoscompo>
-              {children}
-              <Footer />
-            </Aoscompo>
-          </div>
-          <ScrollToTop />
-        </WalletProvider>
+        <SolanaAdapterProvider>
+          <WalletProvider>
+            <div className="flour" aria-hidden />
+            <Header />
+            <div className="relative z-[2]">
+              <Aoscompo>
+                {children}
+                <Footer />
+              </Aoscompo>
+            </div>
+            <ScrollToTop />
+          </WalletProvider>
+        </SolanaAdapterProvider>
       </body>
     </html>
   );
