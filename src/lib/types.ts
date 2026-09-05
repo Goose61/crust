@@ -118,6 +118,22 @@ export type FeeSplit = {
   locked: boolean;
 };
 
+export type MetadataCreator = {
+  address: string;
+  share: number;
+};
+
+/** Fields copied from ZIP sidecar JSON so the launch wizard can review them. */
+export type TokenSidecar = {
+  present: boolean;
+  name?: string;
+  symbol?: string;
+  description?: string;
+  sellerFeeBps?: number;
+  creators?: MetadataCreator[];
+  image?: string;
+};
+
 export type GeneratedToken = {
   tokenId: number;
   dna: string;
@@ -126,6 +142,7 @@ export type GeneratedToken = {
   metadataRelPath: string;
   imageUri?: string;
   metadataUri?: string;
+  sidecar?: TokenSidecar;
   owner?: string | null;
   /** On-chain Metaplex Core asset address, set after a real mint */
   assetAddress?: string;
@@ -268,6 +285,12 @@ export type Collection = {
   logoBlob?: string;
   royaltyBps?: number;
   royaltySplit?: RoyaltySplit;
+  /** On-chain / JSON royalty recipients (Metaplex creators). Overrides royaltySplit mapping when set. */
+  royaltyCreators?: MetadataCreator[];
+  /** How many ZIP sidecar JSON files were found vs tokens. */
+  sidecarJsonCount?: number;
+  /** Creator confirmed Metadata step values; mixed sidecar fields no longer block go-live. */
+  metadataConfirmed?: boolean;
   socials?: CollectionSocials;
   traitPricing?: TraitPricing;
   /** On-chain Metaplex Core collection address (created at go-live). */
@@ -303,6 +326,8 @@ export type Collection = {
 export type LaunchDraftState = {
   step: number;
   mode: "ready" | "layers";
+  /** 2 = shared Metadata step exists. Missing = pre-Metadata wizard; step is remapped on resume. */
+  wizardVersion?: number;
   royaltyBps: number;
   royaltySplit: RoyaltySplit;
   royaltyOwner: boolean;

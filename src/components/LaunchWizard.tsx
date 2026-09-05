@@ -6,6 +6,7 @@ import {
   MILESTONE_EVENTS,
   type Collection,
   type LayerCatalog,
+  type MetadataCreator,
   type MilestoneEventId,
   type RoyaltySplit,
   type TraitPricing,
@@ -29,11 +30,38 @@ import {
   PRIMARY_TRADE_TAX_PERCENT,
   SECONDARY_PLATFORM_FEE_PERCENT,
 } from "@/lib/platform-fees";
+import {
+  applyMetadataOverrides,
+  metadataReviewBlocksLaunch,
+  reviewCollectionMetadata,
+} from "@/lib/metadata-review";
 import { useWallet } from "./WalletProvider";
 
 /* ─── steps ─── */
-const STEPS_READY  = ["Collection", "Traits", "Payments", "Fees", "Reveal", "Milestones", "Go live"];
-const STEPS_LAYERS = ["Rarity", "Preview", "Collection", "Traits", "Payments", "Fees", "Reveal", "Milestones", "Go live"];
+const WIZARD_VERSION = 2;
+const PREFIX_LAYERS = ["Rarity", "Preview"] as const;
+const SHARED_STEPS = [
+  "Metadata",
+  "Collection",
+  "Traits",
+  "Payments",
+  "Fees",
+  "Reveal",
+  "Milestones",
+  "Go live",
+] as const;
+
+function wizardSteps(mode: "ready" | "layers"): string[] {
+  return mode === "layers" ? [...PREFIX_LAYERS, ...SHARED_STEPS] : [...SHARED_STEPS];
+}
+
+function migrateDraftStep(mode: "ready" | "layers", step: number, wizardVersion?: number): number {
+  if (wizardVersion === WIZARD_VERSION) return step;
+  const prefixLen = mode === "layers" ? PREFIX_LAYERS.length : 0;
+  if (step < prefixLen) return step;
+  if (step === prefixLen) return prefixLen;
+  return step + 1;
+}
 
 const RARITY_TIERS: TraitRarity[] = ["common", "rare", "epic"];
 const RARITY_COLOR: Record<TraitRarity, string> = {
@@ -148,7 +176,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [allowlistText, setAllowlistText] = useState("");
   const [allowlistMsg, setAllowlistMsg] = useState<string | null>(null);
 
-  const STEPS = mode === "layers" ? STEPS_LAYERS : STEPS_READY;
+  const STEPS = mode ? wizardSteps(mode) : [];
 
   const feesTotal = collection
     ? collection.fees.ownerPercent + collection.fees.holdersPercent +
@@ -169,6 +197,11 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     ? collection.tokens.length * collection.payments.basePriceUsd
     : 0;
 
+  const metadataReview = useMemo(
+    () => (collection ? reviewCollectionMetadata(collection) : null),
+    [collection],
+  );
+
   const checklist = useMemo(() => {
     if (!collection) return [];
     return [
@@ -183,11 +216,15 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         label: "Royalty split sums to 100%",
       },
       {
+        ok: metadataReview ? !metadataReviewBlocksLaunch(metadataReview) : false,
+        label: "Metadata review errors resolved",
+      },
+      {
         ok: !buybackEnabled || Boolean(collection.buybackTokenCa?.trim()),
         label: "Buyback token CA (contract address)",
       },
     ];
-  }, [collection, publicKey, feesTotal, royaltyOwner, royaltyHolders, royaltyBuyback, royaltySplitTotal, buybackEnabled]);
+  }, [collection, publicKey, feesTotal, royaltyOwner, royaltyHolders, royaltyBuyback, royaltySplitTotal, buybackEnabled, metadataReview]);
 
   const uniqueTraits = useMemo(
     () => (collection ? buildUniqueTraits(collection.tokens) : []),
@@ -197,8 +234,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   function applyLaunchDraft(col: Collection) {
     const draft = col.launchDraft;
     if (draft) {
-      setStep(draft.step);
-      setRoyaltyBps(draft.royaltyBps);
+      setStep(migrateDraftStep(draft.mode, draft.step, draft.wizardVersion));
+      setRoyaltyBps(draft.royaltyBps ?? col.royaltyBps ?? 500);
       setRoyaltySplit(draft.royaltySplit);
       setRoyaltyOwner(draft.royaltyOwner);
       setRoyaltyHolders(draft.royaltyHolders);
@@ -207,6 +244,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     } else {
       setMode(col.layers.length > 0 ? "layers" : "ready");
       setStep(0);
+      setRoyaltyBps(col.royaltyBps ?? 500);
     }
     const withPricing: Collection = {
       ...col,
@@ -308,6 +346,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       };
       setCollection(col);
       setMode("ready");
+      setRoyaltyBps(col.royaltyBps ?? 500);
       setStep(0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
@@ -368,21 +407,48 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     return data.collection as Collection;
   }
 
-  async function persistDraft(nextStep = step) {
-    if (!collection || !publicKey || !mode) return;
+  function editorCreators(src: Collection): MetadataCreator[] {
+    if (src.royaltyCreators && src.royaltyCreators.length > 0) return src.royaltyCreators;
+    if (publicKey) return [{ address: publicKey, share: 100 }];
+    return [{ address: "", share: 100 }];
+  }
+
+  function withAppliedMetadata(src: Collection): Collection {
+    return applyMetadataOverrides(src, {
+      royaltyBps,
+      royaltyCreators: editorCreators(src),
+      symbol: src.symbol,
+      description: src.description,
+    });
+  }
+
+  async function persistDraft(nextStep = step, src = collection) {
+    if (!src || !publicKey || !mode) return;
     try {
       await save({
-        payments: { ...collection.payments, creatorWallet: publicKey },
+        payments: { ...src.payments, creatorWallet: src.payments.creatorWallet || publicKey },
+        royaltyBps,
+        royaltySplit: {
+          ownerPercent: royaltyOwner ? royaltySplit.ownerPercent : 0,
+          holdersPercent: royaltyHolders ? royaltySplit.holdersPercent : 0,
+          buybackPercent: royaltyBuyback ? royaltySplit.buybackPercent : 0,
+        },
+        royaltyCreators: src.royaltyCreators,
+        symbol: src.symbol,
+        description: src.description,
+        metadataConfirmed: src.metadataConfirmed,
+        buybackTokenCa: src.buybackTokenCa,
         launchDraft: {
           step: nextStep,
           mode,
+          wizardVersion: WIZARD_VERSION,
           royaltyBps,
           royaltySplit,
           royaltyOwner,
           royaltyHolders,
           royaltyBuyback,
         },
-      });
+      }, undefined, src);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save progress");
       throw e;
@@ -421,6 +487,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           name: collection.name,
           description: collection.description,
           nameTemplate: collection.nameTemplate,
+          symbol: collection.symbol,
           supply: collection.supply,
           stackOrder: collection.stackOrder,
           layers: collection.layers,
@@ -463,12 +530,15 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       if (buybackEnabled && !collection.buybackTokenCa?.trim()) {
         throw new Error("Enter the buyback token contract address (CA) before launch.");
       }
+      const applied = withAppliedMetadata(collection);
       let current = await save({
-        payments: { ...collection.payments, creatorWallet: payout },
+        payments: { ...applied.payments, creatorWallet: payout },
         royaltyBps,
         royaltySplit: royaltySplitData,
-        buybackTokenCa: collection.buybackTokenCa?.trim() || undefined,
-      });
+        royaltyCreators: applied.royaltyCreators,
+        metadataConfirmed: true,
+        buybackTokenCa: applied.buybackTokenCa?.trim() || undefined,
+      }, undefined, applied);
       if (!current) return;
       if (logoFile) await uploadLogo(current.id);
       if (mode === "layers" && current.layers.length > 0) {
@@ -754,6 +824,300 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           </div>
         )}
 
+        {/* ── Metadata review ── */}
+        {stepIs("Metadata") && collection && metadataReview && (
+          <div className="space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Metadata review</h2>
+              <p className="mt-1 text-sm text-white/60">
+                Sidecar JSON is display data. Phantom groups NFTs from the on-chain Core collection created at go-live — not from these files. Confirm royalty bps, creators, and symbol here before continuing.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                ["Tokens", String(metadataReview.tokenCount)],
+                ["Sidecar JSON", String(metadataReview.sidecarCount)],
+                ["Unique bps", metadataReview.uniqueBps.length ? metadataReview.uniqueBps.join(", ") : "—"],
+                ["Creator sets", String(metadataReview.uniqueCreatorSets.length || 0)],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  <div className="text-[11px] text-white/45">{label}</div>
+                  <div className="truncate text-sm font-medium text-white">{value}</div>
+                </div>
+              ))}
+            </div>
+            {metadataReview.uniqueSymbols.length > 0 && (
+              <p className="text-xs text-white/50">
+                Symbols: {metadataReview.uniqueSymbols.join(", ")}
+              </p>
+            )}
+
+            {metadataReview.issues.length > 0 && (
+              <ul className="space-y-1.5">
+                {metadataReview.issues.map((issue) => (
+                  <li
+                    key={`${issue.code}-${issue.message}`}
+                    className={`rounded-lg border px-3 py-2 text-xs ${
+                      issue.severity === "error"
+                        ? "border-red-400/40 bg-red-400/10 text-red-300"
+                        : "border-[#f5c542]/30 bg-[#f5c542]/10 text-[#f5c542]"
+                    }`}
+                  >
+                    {issue.severity === "error" ? "Error" : "Warning"}: {issue.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {metadataReview.samples.length > 0 && (
+              <div className="overflow-x-auto rounded-lg border border-white/10">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-white/5 text-white/50">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">#</th>
+                      <th className="px-3 py-2 font-medium">Name</th>
+                      <th className="px-3 py-2 font-medium">Symbol</th>
+                      <th className="px-3 py-2 font-medium">Bps</th>
+                      <th className="px-3 py-2 font-medium">Creators</th>
+                      <th className="px-3 py-2 font-medium">Traits</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {metadataReview.samples.map((s) => (
+                      <tr key={s.tokenId} className="border-t border-white/10 text-white/80">
+                        <td className="px-3 py-2">{s.tokenId}</td>
+                        <td className="max-w-[10rem] truncate px-3 py-2">{s.name}</td>
+                        <td className="px-3 py-2">{s.symbol || "—"}</td>
+                        <td className="px-3 py-2">{s.sellerFeeBps ?? "—"}</td>
+                        <td className="max-w-[14rem] truncate px-3 py-2 font-mono text-[10px]">
+                          {s.creators?.map((c) => `${c.address.slice(0, 4)}…${c.share}`).join(", ") || (s.sidecarPresent ? "—" : "no JSON")}
+                        </td>
+                        <td className="px-3 py-2">{s.traitCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="border-t border-white/10 pt-4">
+              <div className="mb-3 flex items-center gap-1 text-sm font-medium text-white">
+                Apply to all tokens
+                <Info tip="These values write into on-chain Core royalties at go-live and into every token's metadata JSON. Creator shares must sum to 100. Payout for primary mints is still the connected wallet on the Payments step." />
+              </div>
+
+              <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <Field label="Symbol">
+                  <input
+                    className="input"
+                    maxLength={10}
+                    value={collection.symbol}
+                    onChange={(e) => setCollection({ ...collection, symbol: e.target.value })}
+                  />
+                </Field>
+                <div className="flex items-end gap-3">
+                  <label className="text-sm text-white/70">Total royalty</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={25}
+                      step={0.5}
+                      value={royaltyBps / 100}
+                      onChange={(e) => setRoyaltyBps(Math.round(Number(e.target.value) * 100))}
+                      className="input w-20 text-center"
+                    />
+                    <span className="text-sm text-white/60">%</span>
+                  </div>
+                  <span className="text-xs text-white/40">{royaltyBps} bps</span>
+                </div>
+              </div>
+
+              <Field label="Description">
+                <textarea
+                  className="input min-h-20"
+                  value={collection.description}
+                  onChange={(e) => setCollection({ ...collection, description: e.target.value })}
+                />
+              </Field>
+
+              <p className="mb-2 mt-4 text-xs text-white/50">Metaplex royalty creators (max 5, shares must sum to 100)</p>
+              <div className="space-y-2">
+                {editorCreators(collection).map((row, idx) => (
+                  <div key={idx} className="flex flex-wrap items-center gap-2">
+                    <input
+                      className="input min-w-[12rem] flex-1 font-mono text-xs"
+                      placeholder="Solana address"
+                      value={row.address}
+                      onChange={(e) => {
+                        const next = editorCreators(collection).map((c, i) =>
+                          i === idx ? { ...c, address: e.target.value.trim() } : c,
+                        );
+                        setCollection({ ...collection, royaltyCreators: next });
+                      }}
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      className="input w-20 text-sm"
+                      value={row.share}
+                      onChange={(e) => {
+                        const next = editorCreators(collection).map((c, i) =>
+                          i === idx ? { ...c, share: Number(e.target.value) } : c,
+                        );
+                        setCollection({ ...collection, royaltyCreators: next });
+                      }}
+                    />
+                    <span className="text-xs text-white/40">share</span>
+                    {editorCreators(collection).length > 1 && (
+                      <button
+                        type="button"
+                        className="text-xs text-white/40 hover:text-white"
+                        onClick={() =>
+                          setCollection({
+                            ...collection,
+                            royaltyCreators: editorCreators(collection).filter((_, i) => i !== idx),
+                          })
+                        }
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {editorCreators(collection).length < 5 && (
+                <button
+                  type="button"
+                  className="mt-2 text-xs text-primary underline"
+                  onClick={() =>
+                    setCollection({
+                      ...collection,
+                      royaltyCreators: [...editorCreators(collection), { address: "", share: 0 }],
+                    })
+                  }
+                >
+                  + Add creator
+                </button>
+              )}
+              <p
+                className={`mt-2 text-xs font-semibold ${
+                  editorCreators(collection).reduce((s, c) => s + Number(c.share || 0), 0) === 100
+                    ? "text-emerald-400"
+                    : "text-red-400"
+                }`}
+              >
+                Creator shares: {editorCreators(collection).reduce((s, c) => s + Number(c.share || 0), 0)} / 100
+              </p>
+
+              <div className="mt-5 border-t border-white/10 pt-4">
+                <div className="mb-3 flex items-center gap-1 text-sm font-medium text-white">
+                  Royalty destination split
+                  <Info tip="Optional platform routing of the royalty % above. Used only when you are not listing explicit Metaplex creator addresses, or as a reminder of how you want proceeds split off-chain. Explicit creator addresses above are what Core writes on-chain." />
+                </div>
+                <p className="mb-2 text-xs text-white/50">Distribute royalties to:</p>
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-white/10 p-3">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={royaltyOwner}
+                        onChange={(e) => {
+                          setRoyaltyOwner(e.target.checked);
+                          if (!e.target.checked) setRoyaltySplit({ ...royaltySplit, ownerPercent: 0 });
+                          else setRoyaltySplit({ ...royaltySplit, ownerPercent: 100 - (royaltyHolders ? royaltySplit.holdersPercent : 0) - (royaltyBuyback ? royaltySplit.buybackPercent : 0) });
+                        }} />
+                      <span className="text-sm font-medium text-white">Creator / Owner wallet</span>
+                    </label>
+                    {royaltyOwner && (
+                      <div className="mt-2 flex items-center gap-2 pl-6">
+                        <input type="number" min={0} max={100} value={royaltySplit.ownerPercent}
+                          onChange={(e) => setRoyaltySplit({ ...royaltySplit, ownerPercent: Number(e.target.value) })}
+                          className="input w-20 text-sm" />
+                        <span className="text-xs text-white/60">% of royalty → creator wallet</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-white/10 p-3">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={royaltyHolders}
+                        onChange={(e) => {
+                          setRoyaltyHolders(e.target.checked);
+                          if (!e.target.checked) setRoyaltySplit({ ...royaltySplit, holdersPercent: 0 });
+                        }} />
+                      <span className="text-sm font-medium text-white">NFT holders share</span>
+                    </label>
+                    {royaltyHolders && (
+                      <div className="mt-2 flex items-center gap-2 pl-6">
+                        <input type="number" min={0} max={100} value={royaltySplit.holdersPercent}
+                          onChange={(e) => setRoyaltySplit({ ...royaltySplit, holdersPercent: Number(e.target.value) })}
+                          className="input w-20 text-sm" />
+                        <span className="text-xs text-white/60">% of royalty → holder treasury</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-white/10 p-3">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={royaltyBuyback}
+                        onChange={(e) => {
+                          setRoyaltyBuyback(e.target.checked);
+                          if (!e.target.checked) setRoyaltySplit({ ...royaltySplit, buybackPercent: 0 });
+                        }} />
+                      <span className="text-sm font-medium text-white">Floor buyback treasury</span>
+                    </label>
+                    {royaltyBuyback && (
+                      <div className="mt-2 space-y-2 pl-6">
+                        <div className="flex items-center gap-2">
+                          <input type="number" min={0} max={100} value={royaltySplit.buybackPercent}
+                            onChange={(e) => setRoyaltySplit({ ...royaltySplit, buybackPercent: Number(e.target.value) })}
+                            className="input w-20 text-sm" />
+                          <span className="text-xs text-white/60">% of royalty → buyback treasury</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {buybackEnabled && (
+                    <div className="rounded-lg border border-[#f5c542]/30 bg-[#f5c542]/5 p-3">
+                      <Field label="Buyback token CA (contract address)">
+                        <input
+                          className="input font-mono text-sm"
+                          placeholder="Solana SPL mint address"
+                          value={collection.buybackTokenCa ?? ""}
+                          onChange={(e) =>
+                            setCollection({ ...collection, buybackTokenCa: e.target.value.trim() })
+                          }
+                        />
+                      </Field>
+                    </div>
+                  )}
+                  {(royaltyOwner || royaltyHolders || royaltyBuyback) && (
+                    <p className={`text-xs font-semibold ${royaltySplitTotal === 100 ? "text-emerald-400" : "text-red-400"}`}>
+                      Split total: {royaltySplitTotal}%
+                      {royaltySplitTotal !== 100 && `. Needs ${100 - royaltySplitTotal > 0 ? "+" : ""}${100 - royaltySplitTotal}% more`}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  const next = withAppliedMetadata(collection);
+                  setCollection(next);
+                  if (publicKey) void persistDraft(step, next);
+                }}
+                className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm text-white disabled:opacity-40"
+              >
+                Apply to all
+              </button>
+              {collection.metadataConfirmed && (
+                <p className="mt-2 text-xs text-emerald-400">Collection-wide metadata confirmed. Mixed sidecar values will not block go-live.</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ── Collection details ── */}
         {stepIs("Collection") && collection && (
           <div className="space-y-4">
@@ -789,11 +1153,6 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 onChange={(e) => setCollection({ ...collection, name: e.target.value })} />
             </Field>
 
-            <Field label="Description">
-              <textarea className="input min-h-24" value={collection.description}
-                onChange={(e) => setCollection({ ...collection, description: e.target.value })} />
-            </Field>
-
             {/* Supply: read-only for ready mode (auto-set from images), editable for layers */}
             {mode === "ready" ? (
               <div>
@@ -824,126 +1183,6 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               <p className="mt-1 text-xs text-white/40">
                 Preview: {collection.nameTemplate.replace("{name}", collection.name || "Collection").replace("{id}", "42")}
               </p>
-            </div>
-
-            {/* Royalty scheme */}
-            <div className="border-t border-white/10 pt-4">
-              <div className="mb-3 flex items-center gap-1 text-sm font-medium text-white">
-                Secondary royalty scheme
-                <Info tip="Royalties are paid when an NFT is resold on the secondary market. Set the total % and choose how it's distributed. Holder and buyback portions are routed to platform-managed treasury contracts." />
-              </div>
-
-              {/* Total royalty % */}
-              <div className="mb-4 flex items-center gap-3">
-                <label className="text-sm text-white/70">Total royalty</label>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number" min={0} max={25} step={0.5}
-                    value={royaltyBps / 100}
-                    onChange={(e) => setRoyaltyBps(Math.round(Number(e.target.value) * 100))}
-                    className="input w-20 text-center"
-                  />
-                  <span className="text-sm text-white/60">%</span>
-                </div>
-                <span className="text-xs text-white/40">of every secondary sale, recommended 5–10%</span>
-              </div>
-
-              {/* Split checkboxes */}
-              <p className="mb-2 text-xs text-white/50">Distribute royalties to:</p>
-              <div className="space-y-3">
-                {/* Owner */}
-                <div className="rounded-lg border border-white/10 p-3">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={royaltyOwner}
-                      onChange={(e) => {
-                        setRoyaltyOwner(e.target.checked);
-                        if (!e.target.checked) setRoyaltySplit({ ...royaltySplit, ownerPercent: 0 });
-                        else setRoyaltySplit({ ...royaltySplit, ownerPercent: 100 - (royaltyHolders ? royaltySplit.holdersPercent : 0) - (royaltyBuyback ? royaltySplit.buybackPercent : 0) });
-                      }} />
-                    <span className="text-sm font-medium text-white">Creator / Owner wallet</span>
-                    <Info tip="Royalties go directly to the creator wallet you set. This is the standard Metaplex royalty flow, enforced on-chain via the Royalties Plugin." />
-                  </label>
-                  {royaltyOwner && (
-                    <div className="mt-2 flex items-center gap-2 pl-6">
-                      <input type="number" min={0} max={100} value={royaltySplit.ownerPercent}
-                        onChange={(e) => setRoyaltySplit({ ...royaltySplit, ownerPercent: Number(e.target.value) })}
-                        className="input w-20 text-sm" />
-                      <span className="text-xs text-white/60">% of royalty → creator wallet</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Holders */}
-                <div className="rounded-lg border border-white/10 p-3">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={royaltyHolders}
-                      onChange={(e) => {
-                        setRoyaltyHolders(e.target.checked);
-                        if (!e.target.checked) setRoyaltySplit({ ...royaltySplit, holdersPercent: 0 });
-                      }} />
-                    <span className="text-sm font-medium text-white">NFT holders share</span>
-                    <Info tip="A portion of every secondary sale goes to a holder-distribution treasury. At each fee_distribution milestone, holders claim their proportional share based on how many NFTs they hold." />
-                  </label>
-                  {royaltyHolders && (
-                    <div className="mt-2 flex items-center gap-2 pl-6">
-                      <input type="number" min={0} max={100} value={royaltySplit.holdersPercent}
-                        onChange={(e) => setRoyaltySplit({ ...royaltySplit, holdersPercent: Number(e.target.value) })}
-                        className="input w-20 text-sm" />
-                      <span className="text-xs text-white/60">% of royalty → holder treasury</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Buyback */}
-                <div className="rounded-lg border border-white/10 p-3">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={royaltyBuyback}
-                      onChange={(e) => {
-                        setRoyaltyBuyback(e.target.checked);
-                        if (!e.target.checked) setRoyaltySplit({ ...royaltySplit, buybackPercent: 0 });
-                      }} />
-                    <span className="text-sm font-medium text-white">Floor buyback treasury</span>
-                    <Info tip="A portion goes to a buyback treasury that periodically purchases NFTs from the secondary market at or near the floor price, helping maintain price stability for your collection." />
-                  </label>
-                  {royaltyBuyback && (
-                    <div className="mt-2 space-y-2 pl-6">
-                      <div className="flex items-center gap-2">
-                        <input type="number" min={0} max={100} value={royaltySplit.buybackPercent}
-                          onChange={(e) => setRoyaltySplit({ ...royaltySplit, buybackPercent: Number(e.target.value) })}
-                          className="input w-20 text-sm" />
-                        <span className="text-xs text-white/60">% of royalty → buyback treasury</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {buybackEnabled && (
-                  <div className="rounded-lg border border-[#f5c542]/30 bg-[#f5c542]/5 p-3">
-                    <Field label="Buyback token CA (contract address)">
-                      <input
-                        className="input font-mono text-sm"
-                        placeholder="Solana SPL mint address, e.g. Tokenkeg..."
-                        value={collection.buybackTokenCa ?? ""}
-                        onChange={(e) =>
-                          setCollection({ ...collection, buybackTokenCa: e.target.value.trim() })
-                        }
-                      />
-                    </Field>
-                    <p className="mt-1 text-xs text-white/50">
-                      Required when buyback is enabled. The treasury uses this token for floor buybacks and holder
-                      rewards tied to the buyback program.
-                    </p>
-                  </div>
-                )}
-
-                {/* Split validation */}
-                {(royaltyOwner || royaltyHolders || royaltyBuyback) && (
-                  <p className={`text-xs font-semibold ${royaltySplitTotal === 100 ? "text-emerald-400" : "text-red-400"}`}>
-                    Split total: {royaltySplitTotal}%
-                    {royaltySplitTotal !== 100 && `. Needs ${100 - royaltySplitTotal > 0 ? "+" : ""}${100 - royaltySplitTotal}% more`}
-                  </p>
-                )}
-              </div>
             </div>
 
             {/* Socials */}
@@ -1425,7 +1664,10 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 if (publicKey && collection) {
                   setBusy(true);
                   try {
-                    await persistDraft(step + 1);
+                    const leavingMetadata = STEPS[step] === "Metadata";
+                    const src = leavingMetadata ? withAppliedMetadata(collection) : collection;
+                    if (leavingMetadata) setCollection(src);
+                    await persistDraft(step + 1, src);
                     setStep((s) => s + 1);
                   } finally {
                     setBusy(false);

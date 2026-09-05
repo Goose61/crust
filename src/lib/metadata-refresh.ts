@@ -26,6 +26,7 @@ export async function refreshCollectionMetadata(collection: Collection): Promise
       attributes: token.attributes,
       creatorWallet: collection.payments.creatorWallet,
       royaltySplit: collection.royaltySplit,
+      royaltyCreators: collection.royaltyCreators,
     });
     const metaJson = JSON.stringify(metadata, null, 2);
     const localMetaPath = path.join(metaDir, `${token.tokenId}.json`);

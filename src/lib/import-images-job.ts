@@ -1,8 +1,7 @@
 import path from "path";
 import { assignRarityRanks } from "@/lib/rarity";
-import { uploadBlob, uploadBlobText } from "@/lib/blob-storage";
-import { blobImagePath, blobMetadataPath } from "@/lib/paths";
-import { buildTokenMetadataJson } from "@/lib/metadata-builders";
+import { uploadBlob } from "@/lib/blob-storage";
+import { blobImagePath } from "@/lib/paths";
 import {
   cleanupTempZipFile,
   downloadZipToTempFile,
@@ -14,8 +13,8 @@ import { newId, saveCollection, updateCollection } from "@/lib/store";
 import { type Collection, type GeneratedToken } from "@/lib/types";
 import { buildImportingCollectionStub } from "@/lib/import-collection-stub";
 import { deleteCollectionUploadZip } from "@/lib/blob-cleanup";
+import { parseSidecarJson, seedCollectionFromSidecars } from "@/lib/metadata-review";
 
-const DEFAULT_ROYALTY_BPS = 500;
 const PROGRESS_EVERY = 5;
 
 export type ImageImportParams = {
@@ -26,32 +25,49 @@ export type ImageImportParams = {
   creatorWallet: string;
 };
 
-async function loadSidecarAttributes(
+function findSidecarPath(
+  entryPath: string,
+  tokenId: number,
+  jsonPaths: Set<string>,
+): string | undefined {
+  const nextToImage = entryPath.replace(/\.(png|jpe?g|webp)$/i, ".json");
+  if (jsonPaths.has(nextToImage)) return nextToImage;
+  const padded = String(tokenId).padStart(3, "0");
+  const suffixes = [
+    `metadata/${tokenId}.json`,
+    `metadata/${padded}.json`,
+    `${tokenId}.json`,
+    `${padded}.json`,
+  ];
+  for (const candidate of jsonPaths) {
+    const norm = candidate.replace(/\\/g, "/");
+    if (suffixes.some((suffix) => norm === suffix || norm.endsWith(`/${suffix}`))) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+async function loadSidecar(
   zipPath: string,
   entryPath: string,
   tokenId: number,
   jsonPaths: Set<string>,
-): Promise<GeneratedToken["attributes"]> {
-  const jsonCandidates = [
-    entryPath.replace(/\.(png|jpe?g|webp)$/i, ".json"),
-    `metadata/${tokenId}.json`,
-  ];
-  for (const candidate of jsonCandidates) {
-    if (!jsonPaths.has(candidate)) continue;
-    try {
-      const raw = await readZipTextEntry(zipPath, candidate);
-      if (!raw) continue;
-      const meta = JSON.parse(raw);
-      return meta.attributes ?? [];
-    } catch {
-      // ignore malformed metadata
-    }
+): Promise<{ attributes: GeneratedToken["attributes"]; sidecar: GeneratedToken["sidecar"] }> {
+  const candidate = findSidecarPath(entryPath, tokenId, jsonPaths);
+  if (!candidate) return { attributes: [], sidecar: { present: false } };
+  try {
+    const raw = await readZipTextEntry(zipPath, candidate);
+    if (!raw) return { attributes: [], sidecar: { present: false } };
+    const meta = JSON.parse(raw);
+    return { attributes: meta.attributes ?? [], sidecar: parseSidecarJson(meta) };
+  } catch {
+    return { attributes: [], sidecar: { present: false } };
   }
-  return [];
 }
 
 export async function runImageImportJob(params: ImageImportParams): Promise<void> {
-  const { collectionId, zipUrl, name, description, creatorWallet } = params;
+  const { collectionId, zipUrl } = params;
   let tmpZip: string | null = null;
 
   try {
@@ -78,12 +94,13 @@ export async function runImageImportJob(params: ImageImportParams): Promise<void
         buf,
         safeExt === ".png" ? "image/png" : safeExt === ".webp" ? "image/webp" : "image/jpeg",
       );
-      const attributes = await loadSidecarAttributes(tmpZip!, entryPath, tokenId, jsonPaths);
+      const { attributes, sidecar } = await loadSidecar(tmpZip!, entryPath, tokenId, jsonPaths);
 
       tokens.push({
         tokenId,
         dna: attributes.map((a) => String(a.value)).join("|"),
         attributes,
+        sidecar,
         imageRelPath: `images/${tokenId}${safeExt}`,
         metadataRelPath: `metadata/${tokenId}.json`,
         imageUri,
@@ -98,32 +115,17 @@ export async function runImageImportJob(params: ImageImportParams): Promise<void
     });
 
     const ranked = assignRarityRanks(tokens);
-    for (const token of ranked) {
-      const metaJson = JSON.stringify(
-        buildTokenMetadataJson({
-          name: `${name} #${token.tokenId}`,
-          symbol: name.slice(0, 8).toUpperCase(),
-          description,
-          sellerFeeBps: DEFAULT_ROYALTY_BPS,
-          image: token.imageUri ?? token.imageRelPath,
-          attributes: token.attributes,
-          creatorWallet,
-        }),
-        null,
-        2,
-      );
-      token.metadataUri = await uploadBlobText(blobMetadataPath(collectionId, token.tokenId), metaJson);
-    }
-
-    await updateCollection(collectionId, (current) => ({
-      ...current,
-      status: "draft",
-      supply: ranked.length,
-      tokens: ranked,
-      pendingZipUrl: undefined,
-      importProgress: undefined,
-      updatedAt: new Date().toISOString(),
-    }));
+    await updateCollection(collectionId, (current) => {
+      const seeded = seedCollectionFromSidecars(current, ranked, jsonPaths.size);
+      return {
+        ...seeded,
+        status: "draft",
+        supply: ranked.length,
+        pendingZipUrl: undefined,
+        importProgress: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Import failed";
     console.error(`[import job ${collectionId}]`, err);
@@ -167,6 +169,12 @@ export async function importImagesFromZipSync(
     throw new Error("No images found in ZIP");
   }
 
+  const jsonPaths = new Set(
+    Object.keys(zip.files).filter(
+      (p) => p.toLowerCase().endsWith(".json") && !p.includes("__MACOSX") && !zip.files[p]?.dir,
+    ),
+  );
+
   const tokens: GeneratedToken[] = [];
   let i = 1;
   for (const [entryPath, entry] of imageEntries) {
@@ -180,12 +188,28 @@ export async function importImagesFromZipSync(
     );
 
     const jsonName = entryPath.replace(/\.(png|jpe?g|webp)$/i, ".json");
-    const jsonFile = zip.file(jsonName) ?? zip.file(`metadata/${i}.json`);
+    const padded = `metadata/${String(i).padStart(3, "0")}.json`;
+    const jsonFile =
+      zip.file(jsonName) ??
+      zip.file(`metadata/${i}.json`) ??
+      zip.file(padded) ??
+      Object.entries(zip.files).find(([p, e]) => {
+        if (e.dir) return false;
+        const norm = p.replace(/\\/g, "/");
+        return (
+          norm.endsWith(`/metadata/${i}.json`) ||
+          norm.endsWith(`/metadata/${String(i).padStart(3, "0")}.json`) ||
+          norm === `${i}.json` ||
+          norm.endsWith(`/${i}.json`)
+        );
+      })?.[1];
     let attributes: GeneratedToken["attributes"] = [];
+    let sidecar: GeneratedToken["sidecar"] = { present: false };
     if (jsonFile) {
       try {
         const meta = JSON.parse(await jsonFile.async("string"));
         attributes = meta.attributes ?? [];
+        sidecar = parseSidecarJson(meta);
       } catch {
         attributes = [];
       }
@@ -194,6 +218,7 @@ export async function importImagesFromZipSync(
       tokenId: i,
       dna: attributes.map((a) => String(a.value)).join("|"),
       attributes,
+      sidecar,
       imageRelPath: `images/${i}${safeExt}`,
       metadataRelPath: `metadata/${i}.json`,
       imageUri,
@@ -202,28 +227,11 @@ export async function importImagesFromZipSync(
   }
 
   const ranked = assignRarityRanks(tokens);
-  for (const token of ranked) {
-    const metaJson = JSON.stringify(
-      buildTokenMetadataJson({
-        name: `${name} #${token.tokenId}`,
-        symbol: name.slice(0, 8).toUpperCase(),
-        description,
-        sellerFeeBps: DEFAULT_ROYALTY_BPS,
-        image: token.imageUri ?? token.imageRelPath,
-        attributes: token.attributes,
-        creatorWallet,
-      }),
-      null,
-      2,
-    );
-    token.metadataUri = await uploadBlobText(blobMetadataPath(id, token.tokenId), metaJson);
-  }
-
+  const stub = buildImportingCollectionStub({ id, name, description, creatorWallet });
   const collection: Collection = {
-    ...buildImportingCollectionStub({ id, name, description, creatorWallet }),
+    ...seedCollectionFromSidecars(stub, ranked, jsonPaths.size),
     status: "draft",
     supply: ranked.length,
-    tokens: ranked,
     importProgress: undefined,
   };
   await saveCollection(collection);

@@ -33,12 +33,17 @@ export async function POST(req: NextRequest) {
     name: body.name ?? collection.name,
     description: body.description ?? collection.description,
     nameTemplate: body.nameTemplate ?? collection.nameTemplate,
+    symbol: body.symbol ?? collection.symbol,
     supply: body.supply ?? collection.supply,
     stackOrder: body.stackOrder ?? collection.stackOrder,
     layers: body.layers ?? collection.layers,
     creatorWallet: body.creatorWallet ?? collection.payments.creatorWallet,
-    sellerFeeBps: Math.round((body.royaltyPercent ?? 2.5) * 100),
+    sellerFeeBps:
+      body.royaltyPercent != null
+        ? Math.round(Number(body.royaltyPercent) * 100)
+        : (collection.royaltyBps ?? 500),
     royaltySplit: collection.royaltySplit,
+    royaltyCreators: collection.royaltyCreators,
     previewCount,
     uniqueness: true,
   });

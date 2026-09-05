@@ -1,9 +1,16 @@
-import type { GeneratedToken, RoyaltySplit } from "./types";
+import type { GeneratedToken, MetadataCreator, RoyaltySplit } from "./types";
 
 export function buildCreatorsFromRoyaltySplit(
   creatorWallet: string,
   royaltySplit?: RoyaltySplit,
+  royaltyCreators?: MetadataCreator[],
 ): { address: string; share: number }[] {
+  if (royaltyCreators && royaltyCreators.length > 0) {
+    return royaltyCreators.map((c) => ({
+      address: c.address,
+      share: c.share,
+    }));
+  }
   const wallet = creatorWallet || "CREATOR_WALLET";
   if (!royaltySplit) {
     return [{ address: wallet, share: 100 }];
@@ -34,6 +41,7 @@ export function buildTokenMetadataJson(opts: {
   attributes: GeneratedToken["attributes"];
   creatorWallet: string;
   royaltySplit?: RoyaltySplit;
+  royaltyCreators?: MetadataCreator[];
 }): Record<string, unknown> {
   return {
     name: opts.name,
@@ -45,7 +53,11 @@ export function buildTokenMetadataJson(opts: {
     properties: {
       files: [{ uri: opts.image, type: "image/png" }],
       category: "image",
-      creators: buildCreatorsFromRoyaltySplit(opts.creatorWallet, opts.royaltySplit),
+      creators: buildCreatorsFromRoyaltySplit(
+        opts.creatorWallet,
+        opts.royaltySplit,
+        opts.royaltyCreators,
+      ),
     },
   };
 }

@@ -61,6 +61,7 @@ export async function ensureCollectionMetadataUri(collection: Collection): Promi
       creators: buildCreatorsFromRoyaltySplit(
         collection.payments.creatorWallet,
         collection.royaltySplit,
+        collection.royaltyCreators,
       ),
     },
   };
@@ -98,6 +99,7 @@ export async function createMarketplaceCoreCollection(
   const royaltyCreators = buildCreatorsFromRoyaltySplit(
     collection.payments.creatorWallet,
     collection.royaltySplit,
+    collection.royaltyCreators,
   ).map((c) => ({
     address: umiPublicKey(c.address),
     percentage: c.share,

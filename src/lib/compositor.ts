@@ -3,7 +3,7 @@ import { existsSync } from "fs";
 import path from "path";
 import sharp from "sharp";
 import JSZip from "jszip";
-import type { GeneratedToken, LayerCatalog, RoyaltySplit } from "./types";
+import type { GeneratedToken, LayerCatalog, MetadataCreator, RoyaltySplit } from "./types";
 import {
   tmpImagesDir,
   tmpMetadataDir,
@@ -14,6 +14,7 @@ import {
 } from "./paths";
 import { uploadBlob, uploadBlobText, downloadBlobToTmp } from "./blob-storage";
 import { buildTokenMetadataJson } from "./metadata-builders";
+import { parseSidecarJson } from "./metadata-review";
 import { assignRarityRanks } from "./rarity";
 
 export { assignRarityRanks };
@@ -127,12 +128,14 @@ export type GenerateOptions = {
   name: string;
   description: string;
   nameTemplate: string;
+  symbol?: string;
   supply: number;
   stackOrder: string[];
   layers: LayerCatalog[];
   creatorWallet: string;
   sellerFeeBps: number;
   royaltySplit?: RoyaltySplit;
+  royaltyCreators?: MetadataCreator[];
   seed?: number;
   previewCount?: number;
   uniqueness?: boolean;
@@ -235,13 +238,14 @@ export async function generateCollection(opts: GenerateOptions) {
       .replace("{id}", String(token.tokenId));
     const metadata = buildTokenMetadataJson({
       name,
-      symbol: opts.name.slice(0, 8).toUpperCase(),
+      symbol: opts.symbol || opts.name.slice(0, 8).toUpperCase(),
       description: opts.description,
       sellerFeeBps: opts.sellerFeeBps,
       image: token.imageUri ?? token.imageRelPath,
       attributes: token.attributes,
       creatorWallet: opts.creatorWallet,
       royaltySplit: opts.royaltySplit,
+      royaltyCreators: opts.royaltyCreators,
     });
     const metaJson = JSON.stringify(metadata, null, 2);
     const localMetaPath = path.join(metaDir, `${token.tokenId}.json`);
@@ -251,6 +255,7 @@ export async function generateCollection(opts: GenerateOptions) {
       blobMetadataPath(opts.collectionId, token.tokenId),
       metaJson,
     );
+    token.sidecar = parseSidecarJson(metadata);
   }
 
   return ranked;
