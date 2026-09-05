@@ -149,11 +149,13 @@ export async function runImageImportJob(params: ImageImportParams): Promise<void
 }
 
 /** Synchronous import for small direct uploads (no blob URL). */
-export async function importImagesFromZipSync(form: FormData): Promise<Collection> {
+export async function importImagesFromZipSync(
+  form: FormData,
+  creatorWallet: string,
+): Promise<Collection> {
   const { loadZipFromImportForm } = await import("@/lib/import-zip-server");
   const name = String(form.get("name") || "Imported collection");
   const description = String(form.get("description") || "");
-  const creatorWallet = String(form.get("creatorWallet") || "");
   const zip = await loadZipFromImportForm(form);
   const id = newId();
 

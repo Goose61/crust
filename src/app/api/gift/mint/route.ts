@@ -15,6 +15,7 @@ import {
   verifyMintTransaction,
 } from "@/lib/verify-mint";
 import type { Collection } from "@/lib/types";
+import { toPublicCollection } from "@/lib/public-collection";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -83,7 +84,7 @@ export async function POST(req: NextRequest) {
     if (!token.metadataUri?.startsWith("http"))
       return NextResponse.json({ error: "Metadata URI missing" }, { status: 400 });
 
-    const recipient = token.owner;
+    const recipient = token.owner || token.reservedBy;
     if (!recipient || !isValidSolanaAddress(recipient))
       return NextResponse.json({ error: "Recipient address missing" }, { status: 400 });
 
@@ -155,15 +156,19 @@ export async function PATCH(req: NextRequest) {
     if (!collection)
       return NextResponse.json({ error: "Collection not found" }, { status: 404 });
 
-    const verified = await verifyMintTransaction(txSignature, network);
-    if (!verified.ok) {
-      return NextResponse.json({ error: verified.reason }, { status: 400 });
-    }
-
     const resolvedTokenId = resolveTokenId(collection, tokenId);
     const token = findGiftToken(collection, resolvedTokenId);
     if (!token)
       return NextResponse.json({ error: "Gift token not found" }, { status: 404 });
+
+    const verified = await verifyMintTransaction(
+      txSignature,
+      network,
+      collection.pendingMint?.assetAddress || token.assetAddress,
+    );
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.reason }, { status: 400 });
+    }
 
     token.mintTxUrl = `https://explorer.solana.com/tx/${txSignature}${explorerClusterQuery(network)}`;
     delete collection.pendingMint;
@@ -182,7 +187,7 @@ export async function PATCH(req: NextRequest) {
     collection.updatedAt = new Date().toISOString();
 
     await saveCollection(collection);
-    return NextResponse.json({ ok: true, collection, tokenId: resolvedTokenId });
+    return NextResponse.json({ ok: true, collection: toPublicCollection(collection), tokenId: resolvedTokenId });
   } catch (err) {
     console.error("[PATCH /api/gift/mint]", err);
     const message = err instanceof Error ? err.message : "Failed to confirm mint";

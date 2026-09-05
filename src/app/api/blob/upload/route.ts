@@ -1,6 +1,7 @@
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 import { ZIP_CONTENT_TYPES, getBlobToken } from "@/lib/blob-config";
+import { requireWalletAuth } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -27,6 +28,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
+    try {
+      requireWalletAuth(request);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Unauthorized";
+      return NextResponse.json({ error: message }, { status: 401 });
+    }
     const body = (await request.json()) as HandleUploadBody;
     const jsonResponse = await handleUpload({
       body,

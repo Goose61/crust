@@ -51,7 +51,7 @@ async function assertBlobUploadConfigured(): Promise<void> {
 function emitProgress(
   onProgress: UploadProgressCallback | undefined,
   partial: Omit<CollectionUploadProgressState, "fileName" | "fileSize">,
-  file: File,
+  file: File | { name: string; size: number },
 ) {
   onProgress?.({
     fileName: file.name,
@@ -63,6 +63,7 @@ function emitProgress(
 export async function uploadCollectionZip(
   file: File,
   onProgress?: UploadProgressCallback,
+  authHeaders?: Record<string, string>,
 ): Promise<{ zipUrl?: string }> {
   if (file.size <= DIRECT_UPLOAD_MAX_BYTES) {
     emitProgress(onProgress, { phase: "uploading", percent: 5 }, file);
@@ -79,6 +80,7 @@ export async function uploadCollectionZip(
     const blob = await upload(pathname, file, {
       access: "public",
       handleUploadUrl: "/api/blob/upload",
+      headers: authHeaders,
       contentType: file.type || "application/zip",
       multipart: file.size > 20 * 1024 * 1024,
       onUploadProgress: ({ percentage }) => {
@@ -99,11 +101,17 @@ function postFormWithUploadProgress(
   form: FormData,
   file: File,
   onProgress?: UploadProgressCallback,
+  authHeaders?: Record<string, string>,
 ): Promise<Response> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", endpoint);
     xhr.responseType = "text";
+    if (authHeaders) {
+      for (const [key, value] of Object.entries(authHeaders)) {
+        xhr.setRequestHeader(key, value);
+      }
+    }
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;
@@ -132,8 +140,9 @@ export async function postImportForm(
   file: File,
   fields: Record<string, string>,
   onProgress?: UploadProgressCallback,
+  authHeaders?: Record<string, string>,
 ): Promise<Response> {
-  const { zipUrl } = await uploadCollectionZip(file, onProgress);
+  const { zipUrl } = await uploadCollectionZip(file, onProgress, authHeaders);
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) {
     form.set(key, value);
@@ -144,20 +153,23 @@ export async function postImportForm(
     form.set("fileName", file.name);
     form.set("fileSize", String(file.size));
     emitProgress(onProgress, { phase: "processing", percent: PROCESSING_START }, file);
-    return fetch(endpoint, { method: "POST", body: form });
+    return fetch(endpoint, { method: "POST", body: form, headers: authHeaders });
   }
 
   form.set("file", file);
   emitProgress(onProgress, { phase: "uploading", percent: 0 }, file);
-  const res = await postFormWithUploadProgress(endpoint, form, file, onProgress);
+  const res = await postFormWithUploadProgress(endpoint, form, file, onProgress, authHeaders);
   emitProgress(onProgress, { phase: "processing", percent: PROCESSING_START }, file);
   return res;
 }
 
-async function startImportProcess(collectionId: string): Promise<void> {
+export async function startImportProcess(
+  collectionId: string,
+  authHeaders?: Record<string, string>,
+): Promise<void> {
   const res = await fetch("/api/import/images/process", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ collectionId }),
   });
   const data = await readJsonResponse<{ error?: string; started?: boolean }>(res);
@@ -166,9 +178,9 @@ async function startImportProcess(collectionId: string): Promise<void> {
   }
 }
 
-async function pollImportUntilReady(
+export async function pollImportUntilReady(
   collectionId: string,
-  file: File,
+  file: File | { name: string; size: number },
   onProgress?: UploadProgressCallback,
 ): Promise<Collection> {
   const started = Date.now();
@@ -220,9 +232,10 @@ export async function postImportJson<T>(
   file: File,
   fields: Record<string, string>,
   onProgress?: UploadProgressCallback,
+  authHeaders?: Record<string, string>,
 ): Promise<T> {
   emitProgress(onProgress, { phase: "uploading", percent: 0 }, file);
-  const res = await postImportForm(endpoint, file, fields, onProgress);
+  const res = await postImportForm(endpoint, file, fields, onProgress, authHeaders);
   const data = await readJsonResponse<
     T & { error?: string; importing?: boolean; collection?: Collection }
   >(res);
@@ -239,7 +252,7 @@ export async function postImportJson<T>(
     data.importing &&
     data.collection?.id
   ) {
-    await startImportProcess(data.collection.id);
+    await startImportProcess(data.collection.id, authHeaders);
 
     const collection = await pollImportUntilReady(data.collection.id, file, onProgress);
     return { ...data, collection } as T;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FeeLedger } from "@/lib/types";
 import { useWallet } from "./WalletProvider";
 import { formatUsd } from "@/lib/collection-ui";
+import { buildAuthHeaders } from "@/lib/wallet-auth-client";
 
 type FeeStatus = {
   feeLedger: FeeLedger | null;
@@ -48,8 +49,11 @@ export function HolderFeePanel({ collectionId }: { collectionId: string }) {
     try {
       const res = await fetch(`/api/collections/${collectionId}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "claim_fees", wallet: publicKey }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(await buildAuthHeaders(publicKey)),
+        },
+        body: JSON.stringify({ action: "claim_fees" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);

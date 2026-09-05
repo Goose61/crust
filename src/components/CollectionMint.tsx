@@ -64,9 +64,11 @@ export function CollectionMint({ initial }: { initial: Collection }) {
     return (
       collection.tokens.find(
         (t) =>
-          t.owner &&
           !t.mintTxUrl &&
-          (t.owner === publicKey || collection.pendingMint?.payer === publicKey),
+          (t.reservedBy === publicKey ||
+            t.owner === publicKey ||
+            (collection.pendingMint?.payer === publicKey &&
+              collection.pendingMint?.tokenId === t.tokenId)),
       ) ?? null
     );
   }, [collection, publicKey]);
@@ -161,26 +163,27 @@ export function CollectionMint({ initial }: { initial: Collection }) {
     }
   }, [searchParams, collection.tokens, completeSlicePayFlow, pollInvoice]);
 
-  async function completeOnChainMint(tokenId?: number) {
+  async function completeOnChainMint(tokenId?: number, snapshot?: Collection) {
     if (!publicKey) {
       await connect();
       return;
     }
+    const col = snapshot ?? collection;
     setMintBusy(true);
     setMessage(null);
     try {
       const resolvedTokenId =
         tokenId ??
-        collection.pendingMint?.tokenId ??
+        col.pendingMint?.tokenId ??
         pendingOnChainToken?.tokenId ??
-        collection.tokens[0]?.tokenId;
+        col.tokens[0]?.tokenId;
 
-      if (!collection.pendingMint || collection.pendingMint.tokenId !== resolvedTokenId) {
+      if (!col.pendingMint || col.pendingMint.tokenId !== resolvedTokenId) {
         const res = await fetch("/api/gift/mint", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            collectionId: collection.id,
+            collectionId: col.id,
             tokenId: resolvedTokenId,
             payer: publicKey,
             network: networkName(),
@@ -197,17 +200,17 @@ export function CollectionMint({ initial }: { initial: Collection }) {
       }
 
       setMessage("Approve the mint in Phantom…");
-      const txSignature = await signMintTx(collection.id, networkName());
+      const txSignature = await signMintTx(col.id, networkName());
 
-      const confirmEndpoint = isGiftBundle(collection)
+      const confirmEndpoint = isGiftBundle(col)
         ? "/api/gift/mint"
-        : `/api/collections/${collection.id}/confirm-mint`;
+        : `/api/collections/${col.id}/confirm-mint`;
 
       const confirm = await fetch(confirmEndpoint, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          collectionId: collection.id,
+          collectionId: col.id,
           tokenId: resolvedTokenId,
           txSignature,
           network: networkName(),
@@ -349,7 +352,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
     setCollection(data.collection);
     if (data.requiresOnChainMint) {
       setMessage(`Paid — approve the on-chain mint in Phantom for #${token.tokenId}…`);
-      await completeOnChainMint(token.tokenId);
+      await completeOnChainMint(token.tokenId, data.collection);
     } else {
       const feeNote =
         Array.isArray(data.feeBreakdowns) && data.feeBreakdowns.length > 0

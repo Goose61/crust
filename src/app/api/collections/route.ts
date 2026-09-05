@@ -8,11 +8,15 @@ import { getPlatformSecretKey } from "@/lib/platform-key";
 import { explorerClusterQuery, getSolanaNetwork } from "@/lib/solana-config";
 import { rateLimit } from "@/lib/rate-limit";
 import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
+import { filterCollectionsForViewer, toPublicCollection } from "@/lib/public-collection";
 import type { Collection } from "@/lib/types";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = readAuthHeaders(req);
   const collections = await listCollections();
-  return NextResponse.json({ collections });
+  return NextResponse.json({
+    collections: filterCollectionsForViewer(collections, auth?.wallet),
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -34,27 +38,31 @@ export async function POST(req: NextRequest) {
   const auth = readAuthHeaders(req);
 
   try {
-    assertCreatorAuth(auth, existing.payments.creatorWallet, {
-      allowUnsetCreator: !existing.payments.creatorWallet,
-    });
+    assertCreatorAuth(auth, existing.payments.creatorWallet);
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unauthorized";
     return NextResponse.json({ error: message }, { status: 401 });
   }
 
+  const {
+    pendingMint: _pendingMint,
+    pendingZipUrl: _pendingZipUrl,
+    tokens: _tokens,
+    ...safeBody
+  } = body;
+  void _pendingMint;
+  void _pendingZipUrl;
+  void _tokens;
+
   const merged: Collection = {
     ...existing,
-    ...body,
+    ...safeBody,
     id: existing.id,
     payments: {
       ...existing.payments,
       ...body.payments,
       pizzaDiscountPercent: 0,
-      creatorWallet:
-        existing.payments.creatorWallet ||
-        body.payments?.creatorWallet?.trim() ||
-        auth?.wallet ||
-        "",
+      creatorWallet: existing.payments.creatorWallet,
     },
     fees: { ...existing.fees, ...body.fees },
     milestones: body.milestones ?? existing.milestones,
@@ -64,7 +72,10 @@ export async function POST(req: NextRequest) {
     logoUrl: body.logoUrl ?? existing.logoUrl,
     royaltyBps: body.royaltyBps ?? existing.royaltyBps,
     royaltySplit: body.royaltySplit ?? existing.royaltySplit,
+    launchDraft: body.launchDraft ?? existing.launchDraft,
     tokens: existing.tokens,
+    pendingMint: existing.pendingMint,
+    pendingZipUrl: existing.pendingZipUrl,
   };
   if (body.name) merged.slug = slugify(body.name);
 
@@ -102,7 +113,6 @@ export async function POST(req: NextRequest) {
 
   if (body.action === "go-live") {
     if (!merged.fees.locked) merged.fees = { ...merged.fees, locked: true };
-    merged.status = "live";
     merged.publicMintOpen = merged.allowlist.length === 0;
 
     const network = getSolanaNetwork();
@@ -114,16 +124,26 @@ export async function POST(req: NextRequest) {
             : await refreshCollectionMetadata(merged);
         merged.tokens = withMeta.tokens;
         const core = await createMarketplaceCoreCollection(merged, network);
-        if (core) {
-          merged.coreCollectionAddress = core.address;
-          merged.coreCollectionTxUrl = `https://explorer.solana.com/tx/${core.txSignature}${explorerClusterQuery(network)}`;
+        if (!core) {
+          return NextResponse.json(
+            { error: "On-chain collection was not created" },
+            { status: 502 },
+          );
         }
+        merged.coreCollectionAddress = core.address;
+        merged.coreCollectionTxUrl = `https://explorer.solana.com/tx/${core.txSignature}${explorerClusterQuery(network)}`;
       } catch (e) {
+        const message = e instanceof Error ? e.message : "Core collection creation failed";
         console.error("[go-live] Core collection creation failed:", e);
+        return NextResponse.json(
+          { error: `On-chain collection failed: ${message}` },
+          { status: 502 },
+        );
       }
     }
+    merged.status = "live";
   }
 
   await saveCollection(merged);
-  return NextResponse.json({ collection: merged });
+  return NextResponse.json({ collection: toPublicCollection(merged) });
 }

@@ -8,7 +8,17 @@ import JSZip from "jszip";
 import yauzl from "yauzl";
 
 export function isBlobZipUrl(url: string): boolean {
-  return url.includes("blob.vercel-storage.com");
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host === "blob.vercel-storage.com" ||
+      host.endsWith(".blob.vercel-storage.com") ||
+      host.endsWith(".public.blob.vercel-storage.com")
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Stream a ZIP to disk — avoids loading large archives into memory. */
@@ -35,15 +45,7 @@ export async function downloadZipToTempFile(zipUrl: string): Promise<string> {
       return tmpPath;
     }
 
-    const res = await fetch(zipUrl);
-    if (!res.ok) {
-      throw new Error(`Could not download uploaded ZIP (HTTP ${res.status})`);
-    }
-    if (!res.body) {
-      throw new Error("Could not download uploaded ZIP (empty response body)");
-    }
-    await streamToFile(res.body);
-    return tmpPath;
+    throw new Error("ZIP URL is not from Blob storage");
   } catch (err) {
     await rm(tmpDir, { recursive: true, force: true });
     throw err;

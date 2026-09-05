@@ -14,6 +14,7 @@ export type StoredInvoice = {
   kind?: "primary_mint" | "secondary_buy";
   createdAt: Date;
   expiresAt: Date;
+  redeemedAt?: Date;
 };
 
 export async function storeInvoice(data: {
@@ -110,6 +111,9 @@ export async function verifySlicePayInvoice(
     if (Math.abs(stored.amountUsd - expectedAmountUsd) > 0.01) {
       return { ok: false, error: "Invoice amount mismatch" };
     }
+    if (stored.redeemedAt) {
+      return { ok: false, error: "Invoice already used" };
+    }
     if (isPaidStatus(stored.status)) return { ok: true };
   }
 
@@ -139,6 +143,31 @@ export async function verifySlicePayInvoice(
   } catch {
     return { ok: false, error: "Could not verify payment status" };
   }
+}
+
+/** Mark a verified invoice as spent. Fails if already redeemed. */
+export async function consumePaidInvoice(
+  invoiceId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!invoiceId) return { ok: false, error: "invoiceId required" };
+  const db = await getDb();
+  const col = db.collection<StoredInvoice>("invoices");
+  const result = await col.findOneAndUpdate(
+    {
+      invoiceId,
+      redeemedAt: { $exists: false },
+      status: { $in: Array.from(PAID_STATUSES) },
+    },
+    { $set: { redeemedAt: new Date() } },
+    { returnDocument: "after" },
+  );
+  if (!result) {
+    const existing = await getStoredInvoice(invoiceId);
+    if (!existing) return { ok: false, error: "Unknown invoice" };
+    if (existing.redeemedAt) return { ok: false, error: "Invoice already used" };
+    return { ok: false, error: "Invoice could not be redeemed" };
+  }
+  return { ok: true };
 }
 
 export async function syncInvoiceStatus(invoiceId: string): Promise<StoredInvoice | null> {

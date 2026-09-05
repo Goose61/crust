@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { listCollections } from "@/lib/store";
+import { toPublicCollection } from "@/lib/public-collection";
 import { coverImageSrc, formatUsd } from "@/lib/collection-ui";
 import { isGiftBundle, isStandaloneGiftRecord } from "@/lib/gift-bundle";
 
 export const dynamic = "force-dynamic";
 
 export default async function MarketPage() {
-  const all = await listCollections();
+  const all = (await listCollections()).map(toPublicCollection);
   const live = all.filter((c) => {
     if (c.status !== "live" && c.status !== "sold_out") return false;
     if (isStandaloneGiftRecord(c)) return false;

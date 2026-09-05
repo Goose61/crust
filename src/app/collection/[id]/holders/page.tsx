@@ -12,6 +12,9 @@ export default async function HoldersPage({
   const { id } = await params;
   const collection = await getCollection(id);
   if (!collection) notFound();
+  if (collection.status === "draft" || collection.status === "importing") {
+    notFound();
+  }
   if (!collection.holderPageUnlocked) {
     return (
       <main className="container mx-auto max-w-xl px-4 py-20 pt-16 text-center">

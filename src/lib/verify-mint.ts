@@ -19,11 +19,13 @@ async function rpcCall<T>(network: SolanaNetwork, method: string, params: unknow
 export async function verifyMintTransaction(
   txSignature: string,
   network: SolanaNetwork,
+  expectedAssetAddress?: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     const tx = await rpcCall<{
       meta?: { err?: unknown };
       slot?: number;
+      transaction?: { message?: { accountKeys?: unknown[] } };
     } | null>(network, "getTransaction", [
       txSignature,
       { encoding: "json", maxSupportedTransactionVersion: 0, commitment: "confirmed" },
@@ -34,6 +36,13 @@ export async function verifyMintTransaction(
     }
     if (tx.meta?.err) {
       return { ok: false, reason: `Transaction failed on-chain: ${JSON.stringify(tx.meta.err)}` };
+    }
+    if (expectedAssetAddress) {
+      const keys = tx.transaction?.message?.accountKeys ?? [];
+      const serialized = JSON.stringify(keys);
+      if (!serialized.includes(expectedAssetAddress)) {
+        return { ok: false, reason: "Transaction does not involve the expected mint asset." };
+      }
     }
     return { ok: true };
   } catch (err) {
@@ -82,6 +91,8 @@ export async function resetStaleMintState(collectionId: string, tokenId?: number
     if (token) {
       delete token.mintTxUrl;
       delete token.assetAddress;
+      delete token.reservedBy;
+      delete token.reservedAt;
     }
 
     if (isGiftBundle(c) || c.supply <= 1) {

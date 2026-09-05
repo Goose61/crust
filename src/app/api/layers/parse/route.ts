@@ -4,6 +4,8 @@ import { parseLayerZip, persistLayerFiles } from "@/lib/compositor";
 import { loadZipBufferFromImportForm } from "@/lib/import-zip-server";
 import { rateLimit } from "@/lib/rate-limit";
 import { defaultPayments, type Collection } from "@/lib/types";
+import { requireWalletAuth } from "@/lib/wallet-auth";
+import { toPublicCollection } from "@/lib/public-collection";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -16,6 +18,14 @@ export async function POST(req: NextRequest) {
     const rl = await rateLimit(`layers:${ip}`, 10, 10 * 60 * 1000);
     if (!rl.allowed) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
+
+    let auth;
+    try {
+      auth = requireWalletAuth(req);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Unauthorized";
+      return NextResponse.json({ error: message }, { status: 401 });
     }
 
     const form = await req.formData();
@@ -67,7 +77,7 @@ export async function POST(req: NextRequest) {
         { at: 50, events: ["reveal_batch", "enable_secondary", "featured_homepage"] },
         { at: 100, events: ["reveal_all", "snapshot_holders"] },
       ],
-      payments: defaultPayments(),
+      payments: defaultPayments({ creatorWallet: auth.wallet }),
       fees: {
         ownerPercent: 98,
         holdersPercent: 1,
@@ -86,7 +96,7 @@ export async function POST(req: NextRequest) {
     };
     await saveCollection(collection);
     return NextResponse.json({
-      collection,
+      collection: toPublicCollection(collection),
       traitCount: layers.length,
       fileCount: parsed.files.length,
     });

@@ -138,6 +138,7 @@ async function buildUnsignedGiftTx(params: {
   network: SolanaNetwork;
   assetSecretKey?: Uint8Array;
   coreCollectionAddress?: string | null;
+  recentBlockhash?: string;
 }): Promise<{
   txBase64: string;
   assetAddress: string;
@@ -162,7 +163,7 @@ async function buildUnsignedGiftTx(params: {
     : generateSigner(umi);
 
   const payerNoop = createNoopSigner(umiPublicKey(params.payer));
-  const blockhash = await fetchLatestBlockhash(rpcUrl);
+  const blockhash = params.recentBlockhash ?? (await fetchLatestBlockhash(rpcUrl));
 
   const collectionAddress =
     params.coreCollectionAddress ?? getCoreCollectionAddress(params.network);
@@ -241,6 +242,9 @@ export async function prepareGiftTransactionForSigning(params: {
   }
 
   const network = params.network ?? getSolanaNetwork();
+  if (!params.pendingMint.assetSecretKeyB64) {
+    throw new Error("Pending mint is missing the asset key.");
+  }
   const assetSecret = secretKeyFromB64(params.pendingMint.assetSecretKeyB64);
 
   const { txBase64, assetAddress } = await buildUnsignedGiftTx({
@@ -309,6 +313,9 @@ export async function cosignAndSubmitGiftTransaction(params: {
   if (!platformSecret) {
     throw new Error("Server mint key not configured (ARWEAVE_SOLANA_KEY).");
   }
+  if (!params.pendingMint.assetSecretKeyB64) {
+    throw new Error("Pending mint is missing the asset key.");
+  }
 
   const network = params.network ?? getSolanaNetwork();
   const rpcUrl = getDirectRpcUrl(network);
@@ -323,6 +330,24 @@ export async function cosignAndSubmitGiftTransaction(params: {
 
   if (assetKp.publicKey.toBase58() !== params.pendingMint.assetAddress) {
     throw new Error("Pending mint asset key does not match stored address.");
+  }
+
+  const expected = await buildUnsignedGiftTx({
+    name: params.pendingMint.name,
+    metadataUri: params.pendingMint.metadataUri,
+    recipient: params.pendingMint.recipient,
+    payer: params.pendingMint.payer,
+    network,
+    assetSecretKey: assetSecret,
+    coreCollectionAddress: params.pendingMint.coreCollectionAddress,
+    recentBlockhash: tx.message.recentBlockhash,
+  });
+
+  const expectedTx = VersionedTransaction.deserialize(Buffer.from(expected.txBase64, "base64"));
+  const userMessage = Buffer.from(tx.message.serialize());
+  const expectedMessage = Buffer.from(expectedTx.message.serialize());
+  if (!userMessage.equals(expectedMessage)) {
+    throw new Error("Signed transaction does not match the pending mint.");
   }
 
   const cosigners = [assetKp];

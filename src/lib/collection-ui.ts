@@ -52,7 +52,7 @@ export function coverImageSrc(collection: Collection) {
 }
 
 export function isTokenSold(token: GeneratedToken, collection: Collection) {
-  if (token.owner) return true;
+  if (token.owner || token.reservedBy) return true;
   if (collection.tokens.some((t) => t.owner)) return false;
   const ordered = [...collection.tokens].sort((a, b) => a.tokenId - b.tokenId);
   const index = ordered.findIndex((t) => t.tokenId === token.tokenId);

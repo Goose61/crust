@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { getCollection } from "@/lib/store";
+import { toPublicCollection } from "@/lib/public-collection";
 import { CollectionMint } from "@/components/CollectionMint";
 import { getSolanaNetwork } from "@/lib/solana-config";
 import {
@@ -19,6 +20,9 @@ export default async function CollectionPage({
   const { id } = await params;
   let collection = await getCollection(id);
   if (!collection) notFound();
+  if (collection.status === "draft" || collection.status === "importing") {
+    notFound();
+  }
 
   // Heal false mint state when Phantom returned a signature but tx never landed.
   for (const t of collection.tokens) {
@@ -34,7 +38,7 @@ export default async function CollectionPage({
 
   return (
     <Suspense fallback={<div className="container mx-auto px-4 py-20 text-white/50">Loading…</div>}>
-      <CollectionMint initial={collection} />
+      <CollectionMint initial={toPublicCollection(collection)} />
     </Suspense>
   );
 }

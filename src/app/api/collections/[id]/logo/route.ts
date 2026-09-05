@@ -4,6 +4,7 @@ import { getCollection, saveCollection } from "@/lib/store";
 import { uploadBlob } from "@/lib/blob-storage";
 import { blobLogoPath } from "@/lib/paths";
 import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
+import { toPublicCollection } from "@/lib/public-collection";
 
 export const runtime = "nodejs";
 
@@ -19,9 +20,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const auth = readAuthHeaders(req);
   try {
-    assertCreatorAuth(auth, collection.payments.creatorWallet, {
-      allowUnsetCreator: !collection.payments.creatorWallet,
-    });
+    assertCreatorAuth(auth, collection.payments.creatorWallet);
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unauthorized";
     return NextResponse.json({ error: message }, { status: 401 });
@@ -50,7 +49,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const logoUrl = await uploadBlob(blobLogoPath(id, safeExt), buf, contentType);
   const updated = await saveCollection({ ...collection, logoUrl });
-  return NextResponse.json({ logoUrl, collection: updated });
+  return NextResponse.json({ logoUrl, collection: toPublicCollection(updated) });
 }
 
 function isAllowedImageMagic(buf: Buffer): boolean {

@@ -15,7 +15,11 @@ import {
 export async function POST(req: NextRequest) {
   const secret = slicePayWebhookSecret();
   const headerSecret = req.headers.get("x-slicepay-secret") ?? req.headers.get("x-webhook-secret");
-  if (secret && headerSecret !== secret) {
+  if (process.env.NODE_ENV === "production") {
+    if (!secret || headerSecret !== secret) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  } else if (secret && headerSecret !== secret) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

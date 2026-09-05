@@ -12,12 +12,16 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith("/api/")) {
     const allowed =
       ALLOWED_ORIGINS.length === 0
-        ? origin
+        ? process.env.NODE_ENV === "production"
+          ? ""
+          : origin
         : ALLOWED_ORIGINS.includes(origin)
           ? origin
           : ALLOWED_ORIGINS[0];
 
-    corsHeaders["Access-Control-Allow-Origin"] = allowed;
+    if (allowed) {
+      corsHeaders["Access-Control-Allow-Origin"] = allowed;
+    }
     corsHeaders["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS";
     corsHeaders["Access-Control-Allow-Headers"] =
       "Content-Type, X-Requested-With, X-Wallet, X-Signature, X-Timestamp";

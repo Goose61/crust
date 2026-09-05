@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCollection, saveCollection } from "@/lib/store";
 import { generateCollection, readGeneratedImageBuffer } from "@/lib/compositor";
 import { rateLimit } from "@/lib/rate-limit";
+import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
+import { toPublicCollection } from "@/lib/public-collection";
 
 export const runtime = "nodejs";
 
@@ -16,6 +18,13 @@ export async function POST(req: NextRequest) {
   const collection = await getCollection(body.id);
   if (!collection) {
     return NextResponse.json({ error: "Collection not found" }, { status: 404 });
+  }
+
+  try {
+    assertCreatorAuth(readAuthHeaders(req), collection.payments.creatorWallet);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unauthorized";
+    return NextResponse.json({ error: message }, { status: 401 });
   }
 
   const previewCount = Math.min(Number(body.previewCount ?? 12), 24);
@@ -63,5 +72,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ collection, previews });
+  return NextResponse.json({ collection: toPublicCollection(collection), previews });
 }

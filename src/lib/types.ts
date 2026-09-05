@@ -136,11 +136,14 @@ export type GeneratedToken = {
     priceUsd: number;
     listedAt: string;
   } | null;
+  /** Wallet that paid and is waiting for on-chain confirm (owner stays unset). */
+  reservedBy?: string | null;
+  reservedAt?: string | null;
 };
 
-/** Server-only co-sign data for in-progress gift mints (cleared after confirm). */
+/** Co-sign data for in-progress mints. `assetSecretKeyB64` is server-only and stripped from APIs. */
 export type PendingMint = {
-  assetSecretKeyB64: string;
+  assetSecretKeyB64?: string;
   assetAddress: string;
   /** Snapshot of mint params so the tx can be rebuilt with a fresh blockhash. */
   name: string;
@@ -286,13 +289,25 @@ export type Collection = {
   feeLedger?: FeeLedger;
   /** Ephemeral asset keypair for Phantom-first multi-signer mint flow */
   pendingMint?: PendingMint;
-  /** Blob URL awaiting /api/import/images/process (cleared when import finishes). */
+  /** Blob URL awaiting /api/import/images/process (cleared when import finishes). Never returned on APIs. */
   pendingZipUrl?: string;
   /** Populated while a large ZIP import runs in the background. */
   importProgress?: ImportProgress;
+  /** Wizard UI snapshot so a creator can resume /launch?id= from the dashboard. */
+  launchDraft?: LaunchDraftState;
   createdAt: string;
   updatedAt: string;
   tokens: GeneratedToken[];
+};
+
+export type LaunchDraftState = {
+  step: number;
+  mode: "ready" | "layers";
+  royaltyBps: number;
+  royaltySplit: RoyaltySplit;
+  royaltyOwner: boolean;
+  royaltyHolders: boolean;
+  royaltyBuyback: boolean;
 };
 
 export type LaunchTemplateId = "pfp" | "1of1" | "meme-token" | "holder-sequel";

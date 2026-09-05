@@ -6,23 +6,43 @@ import type { Collection } from "@/lib/types";
 import { useWallet } from "@/components/WalletProvider";
 import { buildAuthHeaders } from "@/lib/wallet-auth-client";
 
+function canContinueLaunch(c: Collection) {
+  return c.status === "draft" || c.status === "importing";
+}
+
 export default function DashboardPage() {
   const { publicKey, connect } = useWallet();
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/collections")
-      .then((r) => r.json())
-      .then((d) => setCollections(d.collections ?? []));
-  }, []);
+    let cancelled = false;
+    async function load() {
+      setLoadError(null);
+      const headers: Record<string, string> = {};
+      if (publicKey) {
+        try {
+          Object.assign(headers, await buildAuthHeaders(publicKey));
+        } catch (e) {
+          if (!cancelled) {
+            setLoadError(e instanceof Error ? e.message : "Sign in with Phantom to load drafts");
+          }
+          return;
+        }
+      }
+      const r = await fetch("/api/collections", { headers });
+      const d = await r.json();
+      if (!cancelled) setCollections(d.collections ?? []);
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey]);
 
   const mine = useMemo(() => {
-    if (!publicKey) return collections.filter((c) => c.status === "draft");
-    return collections.filter(
-      (c) =>
-        c.payments.creatorWallet === publicKey ||
-        (c.status === "draft" && !c.payments.creatorWallet),
-    );
+    if (!publicKey) return [];
+    return collections.filter((c) => c.payments.creatorWallet === publicKey);
   }, [collections, publicKey]);
 
   async function reveal(id: string) {
@@ -39,7 +59,9 @@ export default function DashboardPage() {
       headers,
       body: JSON.stringify({ action: "reveal" }),
     });
-    const d = await fetch("/api/collections").then((r) => r.json());
+    const d = await fetch("/api/collections", {
+      headers: await buildAuthHeaders(publicKey),
+    }).then((r) => r.json());
     setCollections(d.collections ?? []);
   }
 
@@ -60,8 +82,9 @@ export default function DashboardPage() {
           Connect wallet
         </button>
       )}
+      {loadError && <p className="mt-4 text-sm text-primary">{loadError}</p>}
       <div className="mt-8 space-y-4">
-        {mine.length === 0 && (
+        {publicKey && mine.length === 0 && (
           <p className="text-sm text-white/50">
             No collections yet.{" "}
             <Link href="/launch" className="text-primary hover:underline">
@@ -79,13 +102,25 @@ export default function DashboardPage() {
               <div className="text-white">{c.name}</div>
               <div className="text-xs text-white/50">
                 {c.status} · {c.mintedCount}/{c.supply} · fees {c.fees.locked ? "locked" : "unlocked"}
+                {c.importProgress && c.status === "importing"
+                  ? ` · import ${c.importProgress.done}/${c.importProgress.total}`
+                  : ""}
               </div>
             </div>
             <div className="flex gap-2">
-              <Link href={`/collection/${c.id}`} className="rounded-lg border border-white/15 px-3 py-1 text-xs">
-                View
-              </Link>
-              {c.blindMint && !c.revealed && (
+              {canContinueLaunch(c) ? (
+                <Link
+                  href={`/launch?id=${c.id}`}
+                  className="rounded-lg bg-primary px-3 py-1 text-xs text-white"
+                >
+                  Continue launch
+                </Link>
+              ) : (
+                <Link href={`/collection/${c.id}`} className="rounded-lg border border-white/15 px-3 py-1 text-xs">
+                  View
+                </Link>
+              )}
+              {c.blindMint && !c.revealed && c.status !== "draft" && c.status !== "importing" && (
                 <button
                   onClick={() => void reveal(c.id)}
                   className="rounded-lg bg-primary px-3 py-1 text-xs text-white"

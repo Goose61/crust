@@ -1,5 +1,11 @@
 import { Connection, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import { getDb } from "./db";
 import { getDirectRpcUrl, type SolanaNetwork } from "./solana-config";
+
+type SpentSolSignature = {
+  signature: string;
+  spentAt: Date;
+};
 
 /** Verify a SOL transfer to the creator wallet meets the minimum amount. */
 export async function verifySolPayment(
@@ -37,5 +43,25 @@ export async function verifySolPayment(
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Payment verification failed";
     return { ok: false, error: msg };
+  }
+}
+
+/** Record a SOL payment signature as spent. Returns false if it was already used. */
+export async function consumeSolSignature(
+  signature: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!signature) return { ok: false, error: "Missing payment proof" };
+  const db = await getDb();
+  const col = db.collection<SpentSolSignature>("spent_sol_signatures");
+  await col.createIndex({ signature: 1 }, { unique: true, background: true });
+  try {
+    await col.insertOne({ signature, spentAt: new Date() });
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.includes("E11000") || msg.toLowerCase().includes("duplicate")) {
+      return { ok: false, error: "SOL payment already used" };
+    }
+    throw e;
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { getCollection } from "@/lib/store";
+import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -18,6 +19,12 @@ export async function POST(req: NextRequest) {
     const collection = await getCollection(collectionId);
     if (!collection) {
       return NextResponse.json({ error: "Collection not found" }, { status: 404 });
+    }
+    try {
+      assertCreatorAuth(readAuthHeaders(req), collection.payments.creatorWallet);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Unauthorized";
+      return NextResponse.json({ error: message }, { status: 401 });
     }
     if (!collection.pendingZipUrl) {
       return NextResponse.json({ error: "No pending ZIP import for this collection" }, { status: 400 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MILESTONE_EVENTS,
@@ -13,7 +13,11 @@ import {
 } from "@/lib/types";
 import { tokenImageSrc } from "@/lib/collection-ui";
 import { buildAuthHeaders } from "@/lib/wallet-auth-client";
-import { postImportJson } from "@/lib/upload-collection-zip";
+import {
+  pollImportUntilReady,
+  postImportJson,
+  startImportProcess,
+} from "@/lib/upload-collection-zip";
 import { readJsonResponse } from "@/lib/fetch-json";
 import {
   CollectionUploadProgressOverlay,
@@ -114,7 +118,7 @@ function Info({ tip }: { tip: string }) {
   );
 }
 
-export function LaunchWizard() {
+export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const router = useRouter();
   const { publicKey, connect } = useWallet();
 
@@ -190,6 +194,95 @@ export function LaunchWizard() {
     [collection],
   );
 
+  function applyLaunchDraft(col: Collection) {
+    const draft = col.launchDraft;
+    if (draft) {
+      setStep(draft.step);
+      setRoyaltyBps(draft.royaltyBps);
+      setRoyaltySplit(draft.royaltySplit);
+      setRoyaltyOwner(draft.royaltyOwner);
+      setRoyaltyHolders(draft.royaltyHolders);
+      setRoyaltyBuyback(draft.royaltyBuyback);
+      setMode(draft.mode);
+    } else {
+      setMode(col.layers.length > 0 ? "layers" : "ready");
+      setStep(0);
+    }
+    const withPricing: Collection = {
+      ...col,
+      traitPricing: col.traitPricing ?? defaultTraitPricing(col.tokens),
+    };
+    setCollection(withPricing);
+  }
+
+  useEffect(() => {
+    if (!resumeId) return;
+    let cancelled = false;
+
+    async function loadResume() {
+      if (!publicKey) {
+        setError("Connect your wallet to continue this launch.");
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        const headers = await buildAuthHeaders(publicKey);
+        const res = await fetch(`/api/collections/${resumeId}`, { headers });
+        const data = await readJsonResponse<{ collection: Collection; error?: string }>(res);
+        if (!res.ok) throw new Error(data.error || "Could not load draft");
+        if (cancelled) return;
+
+        let col = data.collection;
+        if (col.status === "live" || col.status === "sold_out") {
+          router.push(`/collection/${col.id}`);
+          return;
+        }
+        if (col.status === "importing") {
+          setUploadProgress({
+            fileName: col.name,
+            fileSize: 0,
+            phase: "processing",
+            percent: 82,
+            detail: col.importProgress
+              ? `${col.importProgress.done} / ${col.importProgress.total}`
+              : undefined,
+          });
+          await startImportProcess(col.id, headers).catch(() => undefined);
+          col = await pollImportUntilReady(
+            col.id,
+            { name: col.name, size: 0 },
+            setUploadProgress,
+          );
+        }
+        if (cancelled) return;
+        applyLaunchDraft(col);
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Could not resume launch");
+        }
+      } finally {
+        if (!cancelled) {
+          setUploadProgress(null);
+          setBusy(false);
+        }
+      }
+    }
+
+    void loadResume();
+    return () => {
+      cancelled = true;
+    };
+  }, [resumeId, publicKey, router]);
+
+  async function authHeadersForUpload() {
+    if (!publicKey) {
+      await connect();
+      throw new Error("Connect Phantom to save this launch to your wallet");
+    }
+    return buildAuthHeaders(publicKey);
+  }
+
   /* ── upload finished-images ZIP ── */
   async function uploadReadyCollection(file: File) {
     setBusy(true);
@@ -201,11 +294,13 @@ export function LaunchWizard() {
       percent: 0,
     });
     try {
+      const headers = await authHeadersForUpload();
       const data = await postImportJson<{ collection: Collection; error?: string }>(
         "/api/import/images",
         file,
-        { name: "My collection" },
+        { name: "My collection", creatorWallet: publicKey ?? "" },
         setUploadProgress,
+        headers,
       );
       const col: Collection = {
         ...data.collection,
@@ -233,11 +328,13 @@ export function LaunchWizard() {
       percent: 0,
     });
     try {
+      const headers = await authHeadersForUpload();
       const data = await postImportJson<{ collection: Collection; error?: string }>(
         "/api/layers/parse",
         file,
-        { name: "My collection" },
+        { name: "My collection", creatorWallet: publicKey ?? "" },
         setUploadProgress,
+        headers,
       );
       setCollection(data.collection);
       setMode("layers");
@@ -271,11 +368,20 @@ export function LaunchWizard() {
     return data.collection as Collection;
   }
 
-  async function persistDraft() {
-    if (!collection || !publicKey) return;
+  async function persistDraft(nextStep = step) {
+    if (!collection || !publicKey || !mode) return;
     try {
       await save({
         payments: { ...collection.payments, creatorWallet: publicKey },
+        launchDraft: {
+          step: nextStep,
+          mode,
+          royaltyBps,
+          royaltySplit,
+          royaltyOwner,
+          royaltyHolders,
+          royaltyBuyback,
+        },
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save progress");
@@ -305,9 +411,11 @@ export function LaunchWizard() {
     setBusy(true);
     setError(null);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (publicKey) Object.assign(headers, await buildAuthHeaders(publicKey));
       const res = await fetch("/api/generate/preview", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           id: collection.id,
           name: collection.name,
@@ -421,6 +529,40 @@ export function LaunchWizard() {
   }
 
   /* ─────────────────────── LANDING ─────────────────────── */
+  if (!mode && resumeId) {
+    return (
+      <>
+        {uploadProgress && <CollectionUploadProgressOverlay {...uploadProgress} />}
+        <div className="container mx-auto max-w-4xl px-4 py-12">
+          <h1 className="text-3xl font-bold text-white">Continue launch</h1>
+          <p className="mt-2 text-sm text-white/60">
+            {publicKey
+              ? busy
+                ? "Loading your saved collection…"
+                : error
+                  ? "We could not restore this draft."
+                  : "Restoring your draft…"
+              : "Connect the wallet you used to start this launch."}
+          </p>
+          {error && (
+            <div className="mt-4 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm text-primary">
+              {error}
+            </div>
+          )}
+          {!publicKey && (
+            <button
+              type="button"
+              onClick={() => void connect()}
+              className="mt-6 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white"
+            >
+              Connect wallet
+            </button>
+          )}
+        </div>
+      </>
+    );
+  }
+
   if (!mode) {
     return (
       <>
@@ -428,14 +570,25 @@ export function LaunchWizard() {
         <div className="container mx-auto max-w-4xl px-4 py-12">
         <h1 className="text-3xl font-bold text-white">Launch a collection</h1>
         <p className="mt-2 text-sm text-white/60">
-          Choose how your art is coming in. Both options write permanent on-chain metadata,
-          set your own fee splits, and keep primary mint and secondary trading right here.
+          Connect your wallet first so a long upload is saved to your profile. Both options write
+          permanent on-chain metadata, set your own fee splits, and keep primary mint and secondary
+          trading right here.
         </p>
 
         {error && (
           <div className="mt-4 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm text-primary">
             {error}
           </div>
+        )}
+
+        {!publicKey && (
+          <button
+            type="button"
+            onClick={() => void connect()}
+            className="mt-6 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white"
+          >
+            Connect wallet to launch
+          </button>
         )}
 
         <div className="mt-10 grid gap-6 md:grid-cols-2">
@@ -461,10 +614,10 @@ export function LaunchWizard() {
               <li>✓ Optional price modifier per trait value</li>
             </ul>
             <label
-              className={`mt-6 flex cursor-pointer items-center justify-center rounded-xl border border-primary/60 bg-primary/10 py-3 text-sm font-medium text-white transition hover:bg-primary/20 ${busy ? "pointer-events-none opacity-50" : ""}`}
+              className={`mt-6 flex cursor-pointer items-center justify-center rounded-xl border border-primary/60 bg-primary/10 py-3 text-sm font-medium text-white transition hover:bg-primary/20 ${busy || !publicKey ? "pointer-events-none opacity-50" : ""}`}
             >
-              {busy ? "Uploading…" : "Upload images ZIP"}
-              <input type="file" accept=".zip" className="hidden" disabled={busy}
+              {busy ? "Uploading…" : publicKey ? "Upload images ZIP" : "Connect wallet first"}
+              <input type="file" accept=".zip" className="hidden" disabled={busy || !publicKey}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadReadyCollection(f); }}
               />
             </label>
@@ -491,10 +644,10 @@ export function LaunchWizard() {
               <li>✓ Unique-DNA collision checking</li>
             </ul>
             <label
-              className={`mt-6 flex cursor-pointer items-center justify-center rounded-xl border border-white/20 py-3 text-sm font-medium text-white/80 transition hover:border-white/40 hover:text-white ${busy ? "pointer-events-none opacity-50" : ""}`}
+              className={`mt-6 flex cursor-pointer items-center justify-center rounded-xl border border-white/20 py-3 text-sm font-medium text-white/80 transition hover:border-white/40 hover:text-white ${busy || !publicKey ? "pointer-events-none opacity-50" : ""}`}
             >
-              {busy ? "Uploading…" : "Upload layers ZIP"}
-              <input type="file" accept=".zip" className="hidden" disabled={busy}
+              {busy ? "Uploading…" : publicKey ? "Upload layers ZIP" : "Connect wallet first"}
+              <input type="file" accept=".zip" className="hidden" disabled={busy || !publicKey}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadLayers(f); }}
               />
             </label>
@@ -1272,7 +1425,7 @@ export function LaunchWizard() {
                 if (publicKey && collection) {
                   setBusy(true);
                   try {
-                    await persistDraft();
+                    await persistDraft(step + 1);
                     setStep((s) => s + 1);
                   } finally {
                     setBusy(false);

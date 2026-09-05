@@ -50,17 +50,22 @@ export function readAuthHeaders(req: Request): AuthHeaders | null {
   return { wallet, signature, timestamp };
 }
 
+export function requireWalletAuth(req: Request): AuthHeaders {
+  const auth = readAuthHeaders(req);
+  if (!auth) throw new Error("Wallet signature required");
+  return auth;
+}
+
 /** Creator ops require a valid wallet signature matching the collection creator. */
 export function assertCreatorAuth(
   auth: AuthHeaders | null,
   creatorWallet: string,
-  opts: { allowUnsetCreator?: boolean } = {},
 ): void {
   if (!auth) throw new Error("Wallet signature required");
-  if (creatorWallet && auth.wallet !== creatorWallet) {
-    throw new Error("Only the creator wallet can perform this action");
-  }
-  if (!creatorWallet && !opts.allowUnsetCreator) {
+  if (!creatorWallet) {
     throw new Error("Creator wallet not set");
+  }
+  if (auth.wallet !== creatorWallet) {
+    throw new Error("Only the creator wallet can perform this action");
   }
 }

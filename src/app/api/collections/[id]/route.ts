@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCollection, updateCollection } from "@/lib/store";
+import {
+  clearTokenReservation,
+  committedCount,
+  getCollection,
+  tryAssignTokenOwner,
+  tryClearTokenOwner,
+  tryReserveToken,
+  updateCollection,
+} from "@/lib/store";
 import { fireDueMilestones } from "@/lib/milestones";
 import { applyRevealTriggers } from "@/lib/reveal";
 import { rateLimit } from "@/lib/rate-limit";
-import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
-import { verifySlicePayInvoice } from "@/lib/slicepay";
-import { verifySolPayment } from "@/lib/verify-payment";
+import { readAuthHeaders, assertCreatorAuth, requireWalletAuth } from "@/lib/wallet-auth";
+import { consumePaidInvoice, verifySlicePayInvoice } from "@/lib/slicepay";
+import { consumeSolSignature, verifySolPayment } from "@/lib/verify-payment";
 import { getQuote } from "@/lib/quotes";
 import { isValidSolanaAddress } from "@/lib/mint-nft";
 import { parseNetwork } from "@/lib/solana-config";
@@ -13,6 +21,8 @@ import { nftPrice } from "@/lib/collection-ui";
 import { buildPendingMintForToken } from "@/lib/collection-mint-on-chain";
 import { getPlatformSecretKey } from "@/lib/platform-key";
 import { accrueSaleFees, claimHolderFees, previewHolderClaim } from "@/lib/fee-distribution";
+import { toPublicCollection, tokenIsCommitted } from "@/lib/public-collection";
+import type { BuildTxResult } from "@/lib/mint-nft";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -29,9 +39,24 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
   if (revealChanged) {
     await updateCollection(id, () => triggered);
-    return NextResponse.json({ collection: triggered });
+    return NextResponse.json({ collection: toPublicCollection(triggered) });
   }
-  return NextResponse.json({ collection });
+  return NextResponse.json({ collection: toPublicCollection(collection) });
+}
+
+async function rollbackMint(params: {
+  id: string;
+  tokenIds: number[];
+  recipient: string;
+  onChain: boolean;
+}) {
+  for (const tokenId of params.tokenIds) {
+    if (params.onChain) {
+      await clearTokenReservation(params.id, tokenId);
+    } else {
+      await tryClearTokenOwner(params.id, tokenId, params.recipient);
+    }
+  }
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
@@ -55,7 +80,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         return current;
       });
       if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
-      return NextResponse.json({ collection });
+      return NextResponse.json({ collection: toPublicCollection(collection) });
     }
 
     if (body.action === "allowlist") {
@@ -63,9 +88,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       const existing = await getCollection(id);
       if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });
       try {
-        assertCreatorAuth(auth, existing.payments.creatorWallet, {
-          allowUnsetCreator: !existing.payments.creatorWallet,
-        });
+        assertCreatorAuth(auth, existing.payments.creatorWallet);
       } catch (e) {
         const message = e instanceof Error ? e.message : "Unauthorized";
         return NextResponse.json({ error: message }, { status: 401 });
@@ -84,7 +107,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         return current;
       });
       if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
-      return NextResponse.json({ collection });
+      return NextResponse.json({ collection: toPublicCollection(collection) });
     }
 
     if (body.action === "mint") {
@@ -104,19 +127,19 @@ export async function POST(req: NextRequest, { params }: Params) {
       const tokenForPrice =
         requestedId != null
           ? pre.tokens.find((t) => t.tokenId === requestedId)
-          : pre.tokens.find((t) => !t.owner);
+          : pre.tokens.find((t) => !tokenIsCommitted(t));
       const expectedUsd = tokenForPrice ? nftPrice(pre, tokenForPrice) : pre.payments.basePriceUsd;
       const method = String(body.method || "slicepay");
+      const invoiceId = String(body.invoiceId || "");
+      const txSignature = String(body.txSignature || "");
 
       if (method === "slicepay") {
-        const invoiceId = String(body.invoiceId || "");
         const orderPrefix = `mint-${pre.id}-`;
         const verified = await verifySlicePayInvoice(invoiceId, expectedUsd, orderPrefix);
         if (!verified.ok) {
           return NextResponse.json({ error: verified.error ?? "Payment not verified" }, { status: 402 });
         }
       } else if (method === "sol") {
-        const txSignature = String(body.txSignature || "");
         const quote = await getQuote(expectedUsd);
         const recipient = pre.payments.creatorWallet;
         if (!recipient) {
@@ -135,38 +158,110 @@ export async function POST(req: NextRequest, { params }: Params) {
         return NextResponse.json({ error: "Unsupported payment method" }, { status: 400 });
       }
 
-      let mintedTokenIds: number[] = [];
-      let recipientAddr = "";
+      if (pre.status !== "live") {
+        return NextResponse.json({ error: "Collection is not live" }, { status: 400 });
+      }
+      if (committedCount(pre) >= pre.supply) {
+        return NextResponse.json({ error: "Sold out" }, { status: 400 });
+      }
+      if (
+        !pre.publicMintOpen &&
+        pre.allowlist.length > 0 &&
+        !pre.allowlist.includes(payerAddr)
+      ) {
+        return NextResponse.json({ error: "Not on allowlist" }, { status: 403 });
+      }
+
+      const qty = Math.max(1, Math.min(10, Number(body.qty ?? 1)));
+      const remaining = pre.supply - committedCount(pre);
+      const minted = Math.min(qty, remaining);
+      const recipient = String(body.recipient || body.payer || "");
+      if (recipient && !isValidSolanaAddress(recipient)) {
+        return NextResponse.json({ error: "Invalid recipient wallet" }, { status: 400 });
+      }
+      const recipientAddr = recipient || payerAddr;
+      const available = pre.tokens.filter((t) => !tokenIsCommitted(t));
+      const pick =
+        requestedId != null
+          ? available.filter((t) => t.tokenId === requestedId).slice(0, 1)
+          : available.slice(0, minted);
+      if (pick.length === 0) {
+        return NextResponse.json(
+          { error: requestedId != null ? "That NFT is already sold" : "Sold out" },
+          { status: 400 },
+        );
+      }
+
+      const useOnChain = pick.length === 1 && Boolean(getPlatformSecretKey());
+      const mintedTokenIds: number[] = [];
+
+      for (const token of pick) {
+        if (useOnChain) {
+          const reserved = await tryReserveToken(id, token.tokenId, recipientAddr);
+          if (!reserved) {
+            await rollbackMint({ id, tokenIds: mintedTokenIds, recipient: recipientAddr, onChain: true });
+            return NextResponse.json({ error: "That NFT is already sold" }, { status: 400 });
+          }
+        } else {
+          const assigned = await tryAssignTokenOwner(id, token.tokenId, recipientAddr);
+          if (!assigned) {
+            await rollbackMint({ id, tokenIds: mintedTokenIds, recipient: recipientAddr, onChain: false });
+            return NextResponse.json({ error: "That NFT is already sold" }, { status: 400 });
+          }
+        }
+        mintedTokenIds.push(token.tokenId);
+      }
+
+      let txResult: BuildTxResult | null = null;
+      if (useOnChain) {
+        const tokenId = mintedTokenIds[0];
+        const network = parseNetwork(body.network);
+        try {
+          const built = await buildPendingMintForToken({
+            collection: pre,
+            tokenId,
+            payer: payerAddr,
+            recipient: recipientAddr,
+            network,
+          });
+          txResult = built.txResult;
+        } catch (e) {
+          await rollbackMint({ id, tokenIds: mintedTokenIds, recipient: recipientAddr, onChain: true });
+          const message = e instanceof Error ? e.message : "On-chain mint could not be built";
+          console.error("[mint] On-chain tx build failed:", e);
+          return NextResponse.json({ error: message }, { status: 500 });
+        }
+      }
+
+      if (method === "slicepay") {
+        const consumed = await consumePaidInvoice(invoiceId);
+        if (!consumed.ok) {
+          await rollbackMint({
+            id,
+            tokenIds: mintedTokenIds,
+            recipient: recipientAddr,
+            onChain: useOnChain,
+          });
+          return NextResponse.json({ error: consumed.error ?? "Invoice already used" }, { status: 402 });
+        }
+      } else if (method === "sol") {
+        const consumed = await consumeSolSignature(txSignature);
+        if (!consumed.ok) {
+          await rollbackMint({
+            id,
+            tokenIds: mintedTokenIds,
+            recipient: recipientAddr,
+            onChain: useOnChain,
+          });
+          return NextResponse.json({ error: consumed.error ?? "SOL payment already used" }, { status: 402 });
+        }
+      }
+
       const feeBreakdowns: ReturnType<typeof accrueSaleFees>["breakdown"][] = [];
       const collection = await updateCollection(id, (current) => {
-        if (current.status !== "live") throw new Error("Collection is not live");
-        if (current.mintedCount >= current.supply) throw new Error("Sold out");
-
-        if (
-          !current.publicMintOpen &&
-          current.allowlist.length > 0 &&
-          !current.allowlist.includes(payerAddr)
-        ) {
-          throw new Error("Not on allowlist");
-        }
-        const qty = Math.max(1, Math.min(10, Number(body.qty ?? 1)));
-        const remaining = current.supply - current.mintedCount;
-        const minted = Math.min(qty, remaining);
-        const recipient = String(body.recipient || body.payer || "");
-        if (recipient && !isValidSolanaAddress(recipient)) {
-          throw new Error("Invalid recipient wallet");
-        }
-        const available = current.tokens.filter((t) => !t.owner);
-        const pick =
-          requestedId != null
-            ? available.filter((t) => t.tokenId === requestedId).slice(0, 1)
-            : available.slice(0, minted);
-        if (pick.length === 0) {
-          throw new Error(requestedId != null ? "That NFT is already sold" : "Sold out");
-        }
-        recipientAddr = recipient;
-        for (const token of pick) {
-          token.owner = recipient;
+        for (const tokenId of mintedTokenIds) {
+          const token = current.tokens.find((t) => t.tokenId === tokenId);
+          if (!token) continue;
           const saleUsd = nftPrice(current, token);
           const accrued = accrueSaleFees(current, {
             saleUsd,
@@ -175,9 +270,14 @@ export async function POST(req: NextRequest, { params }: Params) {
             payer: payerAddr,
           });
           feeBreakdowns.push(accrued.breakdown);
+          if (txResult && tokenId === mintedTokenIds[0]) {
+            token.assetAddress = txResult.assetAddress;
+          }
         }
-        mintedTokenIds = pick.map((t) => t.tokenId);
-        current.mintedCount = current.tokens.filter((t) => t.owner).length;
+        if (txResult) {
+          current.pendingMint = { ...txResult.pendingMint, tokenId: mintedTokenIds[0] };
+        }
+        current.mintedCount = committedCount(current);
         if (current.mintedCount >= current.supply) current.status = "sold_out";
         let updated = fireDueMilestones(current);
         updated = applyRevealTriggers(updated);
@@ -185,50 +285,24 @@ export async function POST(req: NextRequest, { params }: Params) {
       });
       if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-      let updated = collection;
-      let requiresOnChainMint = false;
-
-      if (mintedTokenIds.length === 1 && getPlatformSecretKey()) {
-        const tokenId = mintedTokenIds[0];
-        const network = parseNetwork(body.network);
-        try {
-          const { txResult } = await buildPendingMintForToken({
-            collection: updated,
-            tokenId,
-            payer: payerAddr,
-            recipient: recipientAddr || payerAddr,
-            network,
-          });
-          const built = await updateCollection(id, (c) => {
-            const token = c.tokens.find((t) => t.tokenId === tokenId);
-            if (token) token.assetAddress = txResult.assetAddress;
-            c.pendingMint = { ...txResult.pendingMint, tokenId };
-            return c;
-          });
-          if (built) {
-            updated = built;
-            requiresOnChainMint = true;
-          }
-        } catch (e) {
-          console.error("[mint] On-chain tx build failed:", e);
-        }
-      }
-
       return NextResponse.json({
-        collection: updated,
+        collection: toPublicCollection(collection),
         mintedTokenIds,
-        recipient: recipientAddr || body.recipient || body.payer,
-        requiresOnChainMint,
+        recipient: recipientAddr,
+        requiresOnChainMint: Boolean(txResult),
         feeBreakdowns,
       });
     }
 
     if (body.action === "list_secondary") {
-      const auth = readAuthHeaders(req);
-      const wallet = auth?.wallet ?? String(body.wallet || "");
-      if (!wallet || !isValidSolanaAddress(wallet)) {
-        return NextResponse.json({ error: "Wallet signature required" }, { status: 401 });
+      let auth;
+      try {
+        auth = requireWalletAuth(req);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Unauthorized";
+        return NextResponse.json({ error: message }, { status: 401 });
       }
+      const wallet = auth.wallet;
       const tokenId = Number(body.tokenId);
       const priceUsd = Number(body.priceUsd);
       if (!tokenId || priceUsd <= 0) {
@@ -243,12 +317,18 @@ export async function POST(req: NextRequest, { params }: Params) {
         return current;
       });
       if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
-      return NextResponse.json({ collection });
+      return NextResponse.json({ collection: toPublicCollection(collection) });
     }
 
     if (body.action === "unlist_secondary") {
-      const auth = readAuthHeaders(req);
-      const wallet = auth?.wallet ?? String(body.wallet || "");
+      let auth;
+      try {
+        auth = requireWalletAuth(req);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Unauthorized";
+        return NextResponse.json({ error: message }, { status: 401 });
+      }
+      const wallet = auth.wallet;
       const tokenId = Number(body.tokenId);
       const collection = await updateCollection(id, (current) => {
         const token = current.tokens.find((t) => t.tokenId === tokenId);
@@ -258,7 +338,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         return current;
       });
       if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
-      return NextResponse.json({ collection });
+      return NextResponse.json({ collection: toPublicCollection(collection) });
     }
 
     if (body.action === "buy_secondary") {
@@ -273,9 +353,9 @@ export async function POST(req: NextRequest, { params }: Params) {
       if (!token?.listing) return NextResponse.json({ error: "Not listed for sale" }, { status: 400 });
       const expectedUsd = token.listing.priceUsd;
       const method = String(body.method || "slicepay");
+      const invoiceId = String(body.invoiceId || "");
 
       if (method === "slicepay") {
-        const invoiceId = String(body.invoiceId || "");
         const verified = await verifySlicePayInvoice(
           invoiceId,
           expectedUsd,
@@ -290,6 +370,13 @@ export async function POST(req: NextRequest, { params }: Params) {
         }
       } else {
         return NextResponse.json({ error: "Secondary buys require SlicePay" }, { status: 400 });
+      }
+
+      if (method === "slicepay") {
+        const consumed = await consumePaidInvoice(invoiceId);
+        if (!consumed.ok) {
+          return NextResponse.json({ error: consumed.error ?? "Invoice already used" }, { status: 402 });
+        }
       }
 
       let secondaryBreakdown: ReturnType<typeof accrueSaleFees>["breakdown"] | null = null;
@@ -315,7 +402,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       });
       if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
       return NextResponse.json({
-        collection,
+        collection: toPublicCollection(collection),
         tokenId,
         buyer: payerAddr,
         feeBreakdown: secondaryBreakdown,
@@ -323,10 +410,14 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
 
     if (body.action === "claim_fees") {
-      const wallet = String(body.wallet || "");
-      if (!wallet || !isValidSolanaAddress(wallet)) {
-        return NextResponse.json({ error: "Valid wallet required" }, { status: 400 });
+      let auth;
+      try {
+        auth = requireWalletAuth(req);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Unauthorized";
+        return NextResponse.json({ error: message }, { status: 401 });
       }
+      const wallet = auth.wallet;
       let claimedUsd = 0;
       const collection = await updateCollection(id, (current) => {
         const result = claimHolderFees(current, wallet);
@@ -334,7 +425,11 @@ export async function POST(req: NextRequest, { params }: Params) {
         return result.collection;
       });
       if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
-      return NextResponse.json({ collection, claimedUsd, wallet });
+      return NextResponse.json({
+        collection: toPublicCollection(collection),
+        claimedUsd,
+        wallet,
+      });
     }
 
     if (body.action === "fee_status") {
@@ -359,9 +454,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       const existing = await getCollection(id);
       if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });
       try {
-        assertCreatorAuth(auth, existing.payments.creatorWallet, {
-          allowUnsetCreator: !existing.payments.creatorWallet,
-        });
+        assertCreatorAuth(auth, existing.payments.creatorWallet);
       } catch (e) {
         const message = e instanceof Error ? e.message : "Unauthorized";
         return NextResponse.json({ error: message }, { status: 401 });
@@ -372,7 +465,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         return current;
       });
       if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
-      return NextResponse.json({ collection });
+      return NextResponse.json({ collection: toPublicCollection(collection) });
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : "Request failed";

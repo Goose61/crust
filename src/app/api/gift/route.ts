@@ -25,6 +25,7 @@ import {
 } from "@/lib/gift-metadata";
 import { explorerClusterQuery, parseNetwork } from "@/lib/solana-config";
 import { verifyMintTransaction } from "@/lib/verify-mint";
+import { toPublicCollection } from "@/lib/public-collection";
 
 export const runtime = "nodejs";
 
@@ -152,7 +153,11 @@ export async function PATCH(req: NextRequest) {
   if (!token)
     return NextResponse.json({ error: "Gift token not found in bundle" }, { status: 404 });
 
-  const verified = await verifyMintTransaction(txSignature, network);
+  const verified = await verifyMintTransaction(
+    txSignature,
+    network,
+    collection.pendingMint?.assetAddress || token.assetAddress,
+  );
   if (!verified.ok) {
     return NextResponse.json({ error: verified.reason }, { status: 400 });
   }
@@ -163,5 +168,5 @@ export async function PATCH(req: NextRequest) {
   collection.updatedAt = new Date().toISOString();
 
   await saveCollection(collection);
-  return NextResponse.json({ ok: true, collection, tokenId });
+  return NextResponse.json({ ok: true, collection: toPublicCollection(collection), tokenId });
 }

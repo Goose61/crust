@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { newId, saveCollection } from "@/lib/store";
 import { rateLimit } from "@/lib/rate-limit";
 import { buildImportingCollectionStub } from "@/lib/import-collection-stub";
+import { requireWalletAuth } from "@/lib/wallet-auth";
+import { toPublicCollection } from "@/lib/public-collection";
 import type { Collection } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -22,6 +24,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
     }
 
+    let auth;
+    try {
+      auth = requireWalletAuth(req);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Unauthorized";
+      return NextResponse.json({ error: message }, { status: 401 });
+    }
+
     const form = await req.formData();
     const zipUrl = String(form.get("zipUrl") || "").trim();
     const file = form.get("file");
@@ -38,7 +48,7 @@ export async function POST(req: NextRequest) {
 
     const name = String(form.get("name") || "Imported collection");
     const description = String(form.get("description") || "");
-    const creatorWallet = String(form.get("creatorWallet") || "");
+    const creatorWallet = auth.wallet;
 
     // Blob ZIP: save a lightweight stub — processing runs in /api/import/images/process.
     if (zipUrl) {
@@ -53,14 +63,14 @@ export async function POST(req: NextRequest) {
       await saveCollection(stub);
 
       return NextResponse.json({
-        collection: stub,
+        collection: toPublicCollection(stub),
         importing: true,
       } satisfies { collection: Collection; importing: true });
     }
 
     const { importImagesFromZipSync } = await import("@/lib/import-images-job");
-    const collection = await importImagesFromZipSync(form);
-    return NextResponse.json({ collection });
+    const collection = await importImagesFromZipSync(form, creatorWallet);
+    return NextResponse.json({ collection: toPublicCollection(collection) });
   } catch (err) {
     console.error("[POST /api/import/images]", err);
     const message = err instanceof Error ? err.message : "Import failed";
