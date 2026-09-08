@@ -14,7 +14,8 @@
     "update:gift-metadata": "node scripts/update-gift-metadata.mjs",
     "update:core-collection-metadata": "node scripts/update-core-collection-metadata.mjs",
     "migrate:gift-bundle": "node scripts/migrate-gift-records-to-bundle.mjs",
-    "smoke": "node scripts/smoke-test.mjs"
+    "smoke": "node scripts/smoke-test.mjs",
+    "postinstall": "node scripts/ensure-sharp.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

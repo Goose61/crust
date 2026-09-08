@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCollection, listCollections, saveCollection, slugify } from "@/lib/store";
-import { generateCollection } from "@/lib/compositor";
-import { publishCollection } from "@/lib/storage";
-import { refreshCollectionMetadata } from "@/lib/metadata-refresh";
-import { createMarketplaceCoreCollection } from "@/lib/create-core-collection";
 import { getPlatformSecretKey } from "@/lib/platform-key";
 import { explorerClusterQuery, getSolanaNetwork } from "@/lib/solana-config";
 import { rateLimit } from "@/lib/rate-limit";
@@ -12,11 +8,17 @@ import { filterCollectionsForViewer, toPublicCollection } from "@/lib/public-col
 import type { Collection } from "@/lib/types";
 
 export async function GET(req: NextRequest) {
-  const auth = readAuthHeaders(req);
-  const collections = await listCollections();
-  return NextResponse.json({
-    collections: filterCollectionsForViewer(collections, auth?.wallet),
-  });
+  try {
+    const auth = readAuthHeaders(req);
+    const collections = await listCollections();
+    return NextResponse.json({
+      collections: filterCollectionsForViewer(collections, auth?.wallet),
+    });
+  } catch (e) {
+    console.error("[GET /api/collections]", e);
+    const message = e instanceof Error ? e.message : "Could not list collections";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -90,6 +92,7 @@ export async function POST(req: NextRequest) {
       );
     }
     try {
+      const { generateCollection } = await import("@/lib/compositor");
       merged.tokens = await generateCollection({
         collectionId: merged.id,
         name: merged.name,
@@ -120,6 +123,8 @@ export async function POST(req: NextRequest) {
         );
       }
     } else {
+      const { refreshCollectionMetadata } = await import("@/lib/metadata-refresh");
+      const { publishCollection } = await import("@/lib/storage");
       const withMeta = await refreshCollectionMetadata(merged);
       merged.tokens = withMeta.tokens;
       const published = await publishCollection(merged);
@@ -138,6 +143,8 @@ export async function POST(req: NextRequest) {
     const network = getSolanaNetwork();
     if (!merged.coreCollectionAddress && getPlatformSecretKey()) {
       try {
+        const { refreshCollectionMetadata } = await import("@/lib/metadata-refresh");
+        const { createMarketplaceCoreCollection } = await import("@/lib/create-core-collection");
         const withMeta =
           merged.tokens.some((t) => t.metadataUri?.startsWith("http"))
             ? merged
