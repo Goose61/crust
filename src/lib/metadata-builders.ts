@@ -3,9 +3,17 @@ import type { Collection, GeneratedToken, MetadataCreator, RoyaltySplit } from "
 export function tokenMetadataName(collection: Collection, token: GeneratedToken): string {
   const custom = token.sidecar?.name?.trim();
   if (custom) return custom;
-  return collection.nameTemplate
-    .replace("{name}", collection.name)
-    .replace("{id}", String(token.tokenId));
+  return metadataNameFromTemplate(collection.name, collection.nameTemplate, token.tokenId);
+}
+
+export function metadataNameFromTemplate(
+  collectionName: string,
+  nameTemplate: string,
+  tokenId: number,
+): string {
+  return nameTemplate
+    .replace("{name}", collectionName)
+    .replace("{id}", String(tokenId));
 }
 
 export function tokenMetadataBps(

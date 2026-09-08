@@ -563,6 +563,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     const metaPatch = {
       royaltyBps,
       royaltyCreators: src.royaltyCreators,
+      name: src.name,
       symbol: src.symbol,
       description: src.description,
       nameTemplate: src.nameTemplate,
@@ -812,6 +813,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       royaltyCreators: editorCreators(src),
       symbol: src.symbol,
       description: src.description,
+      name: src.name,
+      nameTemplate: src.nameTemplate,
     });
   }
 
@@ -828,7 +831,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         ...token,
         sidecar: {
           present: true,
-          name: token.sidecar?.name,
+          name: tokenMetadataName(src, token),
           symbol: src.symbol,
           description: src.description,
           sellerFeeBps: token.sidecar?.sellerFeeBps ?? royaltyBps,
@@ -1517,7 +1520,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
-                ["Tokens", String(metadataReview.tokenCount)],
+                ["NFTs", String(metadataReview.tokenCount)],
                 ["Sidecar JSON", String(metadataReview.sidecarCount)],
                 ["Unique bps", metadataReview.uniqueBps.length ? metadataReview.uniqueBps.join(", ") : "—"],
                 ["Creator sets", String(metadataReview.uniqueCreatorSets.length || 0)],
@@ -1555,14 +1558,14 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               <p className="text-xs text-white/45">
                 Tip: if your ZIP uses 0-based JSON (<code className="text-white/60">0.json</code>…
                 <code className="text-white/60">{`${Math.max(0, metadataReview.tokenCount - 1)}.json`}</code>
-                ), token #{metadataReview.tokenCount} pairs with the highest-numbered file — re-upload the ZIP after deploy if pairing looks wrong.
+                ), NFT #{metadataReview.tokenCount} pairs with the highest-numbered file — re-upload the ZIP after deploy if pairing looks wrong.
               </p>
             )}
 
             <div className="space-y-3 border-t border-white/10 pt-4">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-medium text-white">Edit token metadata</h3>
+                  <h3 className="text-sm font-medium text-white">Edit NFT metadata</h3>
                   <p className="mt-1 text-xs text-white/50">
                     Names and royalty bps below are written into each NFT&apos;s Arweave JSON at go-live.
                   </p>
@@ -1664,7 +1667,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             {metadataReview.samples.length > 0 && (
               <div className="overflow-x-auto rounded-lg border border-white/10 opacity-80">
                 <p className="border-b border-white/10 bg-white/5 px-3 py-2 text-[11px] text-white/45">
-                  Sample preview (first tokens)
+                  Sample preview (first NFTs)
                 </p>
                 <table className="w-full text-left text-xs">
                   <thead className="bg-white/5 text-white/50">
@@ -1697,11 +1700,21 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
             <div className="border-t border-white/10 pt-4">
               <div className="mb-3 flex items-center gap-1 text-sm font-medium text-white">
-                Collection defaults (apply to all tokens)
-                <Info tip="These values write into on-chain Core royalties at go-live and into every token's metadata JSON unless you override a token above. Creator addresses below are what Core writes on-chain; the destination split routes proceeds off-chain when creator rows are empty." />
+                Collection-wide settings
+                <Info tip="Edit the fields below, then click Apply changes to all NFTs. Names are built from the collection name + name template; symbol, description, royalty bps, and creators are copied to every NFT unless you override one in the table above." />
               </div>
 
               <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <Field label="Collection name">
+                  <input
+                    className="input"
+                    value={collection.name}
+                    onChange={(e) =>
+                      setCollection({ ...collection, name: e.target.value })
+                    }
+                    placeholder="My collection"
+                  />
+                </Field>
                 <Field label="Name template">
                   <input
                     className="input font-mono text-xs"
@@ -1734,7 +1747,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                     />
                     <span className="text-sm text-white/60">%</span>
                   </div>
-                  <span className="text-xs text-white/40">{royaltyBps} bps → all tokens unless overridden</span>
+                  <span className="text-xs text-white/40">{royaltyBps} bps → all NFTs unless overridden</span>
                 </div>
               </div>
 
@@ -1915,7 +1928,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 }}
                 className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm text-white disabled:opacity-40"
               >
-                Apply defaults to all tokens
+                Apply changes to all NFTs
               </button>
               {collection.metadataConfirmed && (
                 <p className="mt-2 text-xs text-emerald-400">Collection-wide metadata confirmed. Mixed sidecar values will not block go-live.</p>

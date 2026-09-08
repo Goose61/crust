@@ -4,6 +4,7 @@ import type {
   MetadataCreator,
   TokenSidecar,
 } from "./types";
+import { metadataNameFromTemplate } from "./metadata-builders";
 
 function isValidSolanaAddress(addr: string): boolean {
   if (!addr || addr.length < 32 || addr.length > 44) return false;
@@ -247,7 +248,7 @@ export function reviewCollectionMetadata(collection: Collection): MetadataReview
     issues.push({
       severity: "warning",
       code: "token-name-length",
-      message: `${longNames.length} token names exceed ${CORE_NAME_MAX} characters (Core on-chain limit). They will be truncated at mint.`,
+      message: `${longNames.length} NFT names exceed ${CORE_NAME_MAX} characters (Core on-chain limit). They will be truncated at mint.`,
     });
   }
 
@@ -256,13 +257,15 @@ export function reviewCollectionMetadata(collection: Collection): MetadataReview
     issues.push({
       severity: "warning",
       code: "no-attributes",
-      message: `${missingTraits} tokens have no attributes.`,
+      message: `${missingTraits} NFTs have no attributes.`,
     });
   }
 
   const samples = tokens.slice(0, 8).map((t) => ({
     tokenId: t.tokenId,
-    name: t.sidecar?.name || `${collection.name} #${t.tokenId}`,
+    name:
+      t.sidecar?.name ||
+      metadataNameFromTemplate(collection.name, collection.nameTemplate, t.tokenId),
     symbol: t.sidecar?.symbol,
     sellerFeeBps: t.sidecar?.sellerFeeBps,
     creators: t.sidecar?.creators,
@@ -307,16 +310,20 @@ export function applyMetadataOverrides(
     royaltyCreators: MetadataCreator[];
     symbol: string;
     description: string;
+    name?: string;
+    nameTemplate?: string;
   },
 ): Collection {
   const creators = overrides.royaltyCreators
     .map((c) => ({ address: c.address.trim(), share: Number(c.share) || 0 }))
     .filter((c) => c.address.length > 0);
+  const collectionName = overrides.name ?? collection.name;
+  const nameTemplate = overrides.nameTemplate ?? collection.nameTemplate;
   const tokens = collection.tokens.map((token) => ({
     ...token,
     sidecar: {
       present: true,
-      name: token.sidecar?.name,
+      name: metadataNameFromTemplate(collectionName, nameTemplate, token.tokenId),
       symbol: overrides.symbol,
       description: overrides.description,
       sellerFeeBps: overrides.royaltyBps,
@@ -326,6 +333,8 @@ export function applyMetadataOverrides(
   }));
   return {
     ...collection,
+    name: collectionName,
+    nameTemplate,
     tokens,
     royaltyBps: overrides.royaltyBps,
     royaltyCreators: creators,
