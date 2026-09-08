@@ -60,6 +60,10 @@ export async function POST(req: NextRequest) {
     ...existing,
     ...safeBody,
     id: existing.id,
+    name: body.name !== undefined ? body.name : existing.name,
+    description: body.description !== undefined ? body.description : existing.description,
+    nameTemplate: body.nameTemplate !== undefined ? body.nameTemplate : existing.nameTemplate,
+    symbol: body.symbol !== undefined ? body.symbol : existing.symbol,
     payments: {
       ...existing.payments,
       ...body.payments,

@@ -226,6 +226,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
   const uploadInProgressRef = useRef(false);
   const rezipInputRef = useRef<HTMLInputElement>(null);
+  const collectionRef = useRef<Collection | null>(null);
+  collectionRef.current = collection;
 
   const STEPS = mode ? wizardSteps(mode) : [];
 
@@ -558,7 +560,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     });
   }
 
-  async function saveTokenMetadata(src = collection) {
+  async function saveTokenMetadata(src = collectionRef.current) {
     if (!src || !publicKey) return src;
     const metaPatch = {
       royaltyBps,
@@ -580,9 +582,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           authHeaders: headers,
         });
       }
-      const saved = await save(metaPatch, undefined, col);
-      setCollection(saved ?? col);
-      return saved ?? col;
+      return save(metaPatch, undefined, col);
     }
     return save({ ...metaPatch, tokens: src.tokens }, undefined, src);
   }
@@ -780,7 +780,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     await checkLocalAssets(collection);
   }
   async function save(patch: Partial<Collection> = {}, action?: string, base?: Collection) {
-    const src = base ?? collection;
+    const src = base ?? collectionRef.current;
     if (!src) return src;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (publicKey) {
@@ -797,8 +797,42 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     });
     const data = await readJsonResponse<{ collection: Collection; error?: string }>(res);
     if (!res.ok) throw new Error(data.error || "Save failed");
-    setCollection(data.collection);
-    return data.collection as Collection;
+    const server = data.collection;
+    setCollection((prev) => {
+      if (!prev || prev.id !== server.id) {
+        return { ...server, ...patch, tokens: patch.tokens ?? server.tokens };
+      }
+      const merged: Collection = {
+        ...server,
+        ...patch,
+        tokens: patch.tokens ?? server.tokens,
+      };
+      // Keep edits made while a slow save (e.g. batched NFT metadata) was in flight.
+      if (prev.description !== src.description) merged.description = prev.description;
+      if (prev.name !== src.name) merged.name = prev.name;
+      if (prev.nameTemplate !== src.nameTemplate) merged.nameTemplate = prev.nameTemplate;
+      if (prev.symbol !== src.symbol) merged.symbol = prev.symbol;
+      if (prev.tokens !== src.tokens) merged.tokens = prev.tokens;
+      return merged;
+    });
+    return { ...server, ...patch, tokens: patch.tokens ?? server.tokens } as Collection;
+  }
+
+  /** Save collection-level fields only — avoids re-uploading all NFT rows. */
+  async function saveCollectionSettings(from = collectionRef.current) {
+    if (!from || !publicKey) return from;
+    return save(
+      {
+        name: from.name,
+        description: from.description,
+        nameTemplate: from.nameTemplate,
+        symbol: from.symbol,
+        royaltyBps,
+        royaltyCreators: from.royaltyCreators,
+      },
+      undefined,
+      from,
+    );
   }
 
   function editorCreators(src: Collection): MetadataCreator[] {
@@ -1568,6 +1602,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                   <h3 className="text-sm font-medium text-white">Edit NFT metadata</h3>
                   <p className="mt-1 text-xs text-white/50">
                     Names and royalty bps below are written into each NFT&apos;s Arweave JSON at go-live.
+                    Use Apply changes to all NFTs to save NFT-level edits.
                   </p>
                 </div>
                 <input
@@ -1603,7 +1638,6 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                             onChange={(e) =>
                               updateTokenSidecar(t.tokenId, { name: e.target.value })
                             }
-                            onBlur={() => void saveTokenMetadata()}
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -1618,7 +1652,6 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                                 sellerFeeBps: Number(e.target.value),
                               })
                             }
-                            onBlur={() => void saveTokenMetadata()}
                           />
                         </td>
                         <td className="px-3 py-2">{t.attributes.length}</td>
@@ -1756,6 +1789,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                   className="input min-h-20"
                   value={collection.description}
                   onChange={(e) => setCollection({ ...collection, description: e.target.value })}
+                  onBlur={() => void saveCollectionSettings()}
                 />
               </Field>
 
