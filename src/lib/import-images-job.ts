@@ -14,7 +14,7 @@ import { type Collection, type GeneratedToken } from "@/lib/types";
 import { buildImportingCollectionStub } from "@/lib/import-collection-stub";
 import { deleteCollectionUploadZip } from "@/lib/blob-cleanup";
 import { parseSidecarJson, seedCollectionFromSidecars } from "@/lib/metadata-review";
-import { findSidecarPath } from "@/lib/sidecar-matching";
+import { findSidecarPath, inferJsonIndexBase } from "@/lib/sidecar-matching";
 
 const PROGRESS_EVERY = 5;
 
@@ -31,8 +31,13 @@ async function loadSidecar(
   entryPath: string,
   tokenId: number,
   jsonPaths: Set<string>,
+  tokenCount: number,
+  indexBase: 0 | 1,
 ): Promise<{ attributes: GeneratedToken["attributes"]; sidecar: GeneratedToken["sidecar"] }> {
-  const candidate = findSidecarPath(entryPath, tokenId, jsonPaths);
+  const candidate = findSidecarPath(entryPath, tokenId, jsonPaths, {
+    tokenCount,
+    indexBase,
+  });
   if (!candidate) return { attributes: [], sidecar: { present: false } };
   try {
     const raw = await readZipTextEntry(zipPath, candidate);
@@ -54,6 +59,7 @@ export async function runImageImportJob(params: ImageImportParams): Promise<void
     if (images.length === 0) {
       throw new Error("No images found in ZIP");
     }
+    const indexBase = inferJsonIndexBase(jsonPaths, images.length);
 
     await updateCollection(collectionId, (current) => ({
       ...current,
@@ -72,7 +78,14 @@ export async function runImageImportJob(params: ImageImportParams): Promise<void
         buf,
         safeExt === ".png" ? "image/png" : safeExt === ".webp" ? "image/webp" : "image/jpeg",
       );
-      const { attributes, sidecar } = await loadSidecar(tmpZip!, entryPath, tokenId, jsonPaths);
+      const { attributes, sidecar } = await loadSidecar(
+        tmpZip!,
+        entryPath,
+        tokenId,
+        jsonPaths,
+        images.length,
+        indexBase,
+      );
 
       tokens.push({
         tokenId,

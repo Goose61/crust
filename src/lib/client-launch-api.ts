@@ -1,4 +1,9 @@
-import { buildTokenMetadataJson } from "@/lib/metadata-builders";
+import {
+  buildTokenMetadataJson,
+  resolveMetadataCreators,
+  tokenMetadataBps,
+  tokenMetadataName,
+} from "@/lib/metadata-builders";
 import { buildAuthHeaders } from "@/lib/wallet-auth-client";
 import { readJsonResponse } from "@/lib/fetch-json";
 import type { Collection, GeneratedToken, LayerCatalog, MetadataCreator, RoyaltySplit } from "@/lib/types";
@@ -137,20 +142,23 @@ export function buildTokenMetadataForUpload(
   royaltySplit: RoyaltySplit,
   royaltyCreators?: MetadataCreator[],
 ): string {
-  const name = collection.nameTemplate
-    .replace("{name}", collection.name)
-    .replace("{id}", String(token.tokenId));
+  const effectiveBps = tokenMetadataBps(collection, token, royaltyBps);
+  const creators = resolveMetadataCreators(
+    collection.payments.creatorWallet,
+    royaltySplit,
+    royaltyCreators?.length ? royaltyCreators : token.sidecar?.creators,
+  );
   return JSON.stringify(
     buildTokenMetadataJson({
-      name,
-      symbol: collection.symbol,
-      description: collection.description,
-      sellerFeeBps: royaltyBps,
+      name: tokenMetadataName(collection, token),
+      symbol: token.sidecar?.symbol?.trim() || collection.symbol,
+      description: token.sidecar?.description?.trim() || collection.description,
+      sellerFeeBps: effectiveBps,
       image: imageUri,
       attributes: token.attributes,
       creatorWallet: collection.payments.creatorWallet,
       royaltySplit,
-      royaltyCreators,
+      royaltyCreators: creators,
     }),
     null,
     2,

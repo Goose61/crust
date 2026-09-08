@@ -263,3 +263,35 @@ export async function estimateArweaveBytes(
 export function assetToObjectUrl(asset: StoredAsset): string {
   return URL.createObjectURL(new Blob([asset.data], { type: asset.contentType }));
 }
+
+/** Remove all IndexedDB assets and upload progress for a collection draft. */
+export async function clearCollectionAssets(collectionId: string): Promise<void> {
+  const db = await openDb();
+  const prefixes = [`img:${collectionId}:`, `layer:${collectionId}:`, logoKey(collectionId)];
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([ASSET_STORE, PROGRESS_STORE], "readwrite");
+    for (const storeName of [ASSET_STORE, PROGRESS_STORE]) {
+      const store = tx.objectStore(storeName);
+      if (storeName === PROGRESS_STORE) {
+        store.delete(collectionId);
+        continue;
+      }
+      const req = store.openCursor();
+      req.onerror = () => reject(req.error ?? new Error("IndexedDB cursor failed"));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) return;
+        const key = String(cursor.key);
+        if (prefixes.some((p) => key.startsWith(p) || key === p)) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+    }
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB clear failed"));
+  });
+}

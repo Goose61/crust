@@ -5,7 +5,7 @@
 import JSZip from "jszip";
 import { assignRarityRanks } from "@/lib/rarity";
 import { parseSidecarJson } from "@/lib/metadata-review";
-import { findSidecarPath, isTokenSidecarJsonPath } from "@/lib/sidecar-matching";
+import { findSidecarPath, inferJsonIndexBase, isTokenSidecarJsonPath } from "@/lib/sidecar-matching";
 import { putImage } from "@/lib/client-asset-store";
 import type { GeneratedToken } from "@/lib/types";
 
@@ -32,8 +32,13 @@ async function loadSidecarFromZip(
   entryPath: string,
   tokenId: number,
   jsonPaths: Set<string>,
+  tokenCount: number,
 ): Promise<{ attributes: GeneratedToken["attributes"]; sidecar: GeneratedToken["sidecar"] }> {
-  const candidate = findSidecarPath(entryPath, tokenId, jsonPaths);
+  const indexBase = inferJsonIndexBase(jsonPaths, tokenCount);
+  const candidate = findSidecarPath(entryPath, tokenId, jsonPaths, {
+    tokenCount,
+    indexBase,
+  });
   if (!candidate) return { attributes: [], sidecar: { present: false } };
   const file = zip.file(candidate);
   if (!file) return { attributes: [], sidecar: { present: false } };
@@ -107,6 +112,7 @@ export async function parseReadyArtZip(
       entryPath,
       tokenId,
       jsonPaths,
+      total,
     );
 
     tokens.push({

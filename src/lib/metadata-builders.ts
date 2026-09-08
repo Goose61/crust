@@ -1,4 +1,30 @@
-import type { GeneratedToken, MetadataCreator, RoyaltySplit } from "./types";
+import type { Collection, GeneratedToken, MetadataCreator, RoyaltySplit } from "./types";
+
+export function tokenMetadataName(collection: Collection, token: GeneratedToken): string {
+  const custom = token.sidecar?.name?.trim();
+  if (custom) return custom;
+  return collection.nameTemplate
+    .replace("{name}", collection.name)
+    .replace("{id}", String(token.tokenId));
+}
+
+export function tokenMetadataBps(
+  collection: Collection,
+  token: GeneratedToken,
+  fallbackBps: number,
+): number {
+  const bps = token.sidecar?.sellerFeeBps;
+  if (bps != null && Number.isFinite(bps)) return bps;
+  return collection.royaltyBps ?? fallbackBps;
+}
+
+export function resolveMetadataCreators(
+  creatorWallet: string,
+  royaltySplit?: RoyaltySplit,
+  royaltyCreators?: MetadataCreator[],
+): MetadataCreator[] {
+  return buildCreatorsFromRoyaltySplit(creatorWallet, royaltySplit, royaltyCreators);
+}
 
 export function buildCreatorsFromRoyaltySplit(
   creatorWallet: string,

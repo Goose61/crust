@@ -476,3 +476,34 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   return NextResponse.json({ error: "unknown action" }, { status: 400 });
 }
+
+export async function DELETE(req: NextRequest, { params }: Params) {
+  try {
+    const { id } = await params;
+    const auth = requireWalletAuth(req);
+    const existing = await getCollection(id);
+    if (!existing) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    assertCreatorAuth(auth, existing.payments.creatorWallet);
+    if (existing.status !== "draft" && existing.status !== "importing") {
+      return NextResponse.json(
+        { error: "Only draft or in-progress launches can be deleted" },
+        { status: 400 },
+      );
+    }
+    const { deleteCollection } = await import("@/lib/store");
+    const deleted = await deleteCollection(id);
+    if (!deleted) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true, id });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Delete failed";
+    const status =
+      message.includes("signature") || message.includes("creator") || message.includes("Wallet")
+        ? 401
+        : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}

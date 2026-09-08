@@ -19,6 +19,7 @@ import { buildAuthHeaders, AUTH_TTL_MS } from "@/lib/wallet-auth-client";
 import { readJsonResponse } from "@/lib/fetch-json";
 import {
   assetToObjectUrl,
+  clearCollectionAssets,
   estimateArweaveBytes,
   getImage,
   getLogo,
@@ -41,6 +42,8 @@ import {
   patchCollectionUris,
   postImportDraft,
   postImportDraftWithTokens,
+  importTokenBatch,
+  TOKEN_IMPORT_BATCH_SIZE,
 } from "@/lib/client-launch-api";
 import {
   uploadCollectionWithPhantom,
@@ -61,8 +64,10 @@ import {
   metadataReviewBlocksLaunch,
   reviewCollectionMetadata,
 } from "@/lib/metadata-review";
+import { tokenMetadataName } from "@/lib/metadata-builders";
 import {
   buildInitialLaunchDraft,
+  forgetLaunchDraft,
   isContinuableLaunch,
   rememberLaunchDraft,
   readRememberedLaunchDraft,
@@ -71,6 +76,7 @@ import { useWallet } from "./WalletProvider";
 
 /* ─── steps ─── */
 const WIZARD_VERSION = 2;
+const TOKEN_PAGE_SIZE = 25;
 const PREFIX_LAYERS = ["Rarity", "Preview"] as const;
 const SHARED_STEPS = [
   "Metadata",
@@ -214,6 +220,9 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [localPreviewUrls, setLocalPreviewUrls] = useState<Map<number, string>>(new Map());
   const [goLivePhase, setGoLivePhase] = useState<string | null>(null);
   const [arweaveUploadDetail, setArweaveUploadDetail] = useState<string | null>(null);
+  const [tokenPage, setTokenPage] = useState(0);
+  const [tokenFilter, setTokenFilter] = useState("");
+  const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
 
   const uploadInProgressRef = useRef(false);
   const rezipInputRef = useRef<HTMLInputElement>(null);
@@ -242,6 +251,25 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const metadataReview = useMemo(
     () => (collection ? reviewCollectionMetadata(collection) : null),
     [collection],
+  );
+
+  const filteredTokens = useMemo(() => {
+    if (!collection) return [];
+    const q = tokenFilter.trim();
+    if (!q) return collection.tokens;
+    const n = Number(q);
+    if (Number.isFinite(n)) {
+      return collection.tokens.filter((t) => t.tokenId === n);
+    }
+    return collection.tokens.filter((t) =>
+      tokenMetadataName(collection, t).toLowerCase().includes(q.toLowerCase()),
+    );
+  }, [collection, tokenFilter]);
+
+  const tokenPageCount = Math.max(1, Math.ceil(filteredTokens.length / TOKEN_PAGE_SIZE));
+  const pagedTokens = filteredTokens.slice(
+    tokenPage * TOKEN_PAGE_SIZE,
+    tokenPage * TOKEN_PAGE_SIZE + TOKEN_PAGE_SIZE,
   );
 
   const checklist = useMemo(() => {
@@ -478,6 +506,86 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     }
   }
 
+  async function deleteSavedLaunch(c: Collection) {
+    if (!publicKey) return;
+    const label = c.name || "Untitled collection";
+    if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
+    setDeletingDraftId(c.id);
+    setError(null);
+    try {
+      const headers = await buildAuthHeaders(publicKey);
+      const res = await fetch(`/api/collections/${c.id}`, {
+        method: "DELETE",
+        headers,
+      });
+      const data = await readJsonResponse<{ ok?: boolean; error?: string }>(res);
+      if (!res.ok) throw new Error(data.error || "Delete failed");
+      forgetLaunchDraft(publicKey, c.id);
+      await clearCollectionAssets(c.id).catch(() => undefined);
+      setSavedDrafts((prev) => prev.filter((d) => d.id !== c.id));
+      if (collection?.id === c.id) {
+        setCollection(null);
+        setMode(null);
+        setStep(0);
+        router.replace("/launch", { scroll: false });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete launch");
+    } finally {
+      setDeletingDraftId(null);
+    }
+  }
+
+  function updateTokenSidecar(
+    tokenId: number,
+    patch: Partial<NonNullable<GeneratedToken["sidecar"]>>,
+  ) {
+    if (!collection) return;
+    setCollection({
+      ...collection,
+      tokens: collection.tokens.map((t) =>
+        t.tokenId === tokenId
+          ? {
+              ...t,
+              sidecar: {
+                present: true,
+                ...t.sidecar,
+                ...patch,
+              },
+            }
+          : t,
+      ),
+    });
+  }
+
+  async function saveTokenMetadata(src = collection) {
+    if (!src || !publicKey) return src;
+    const metaPatch = {
+      royaltyBps,
+      royaltyCreators: src.royaltyCreators,
+      symbol: src.symbol,
+      description: src.description,
+      nameTemplate: src.nameTemplate,
+      metadataConfirmed: src.metadataConfirmed,
+    };
+    if (src.tokens.length > TOKEN_IMPORT_BATCH_SIZE) {
+      const headers = await buildAuthHeaders(publicKey);
+      let col = src;
+      for (let i = 0; i < src.tokens.length; i += TOKEN_IMPORT_BATCH_SIZE) {
+        const batch = src.tokens.slice(i, i + TOKEN_IMPORT_BATCH_SIZE);
+        col = await importTokenBatch(publicKey, src.id, batch, {
+          finalize: i + batch.length >= src.tokens.length,
+          sidecarJsonCount: src.sidecarJsonCount,
+          authHeaders: headers,
+        });
+      }
+      const saved = await save(metaPatch, undefined, col);
+      setCollection(saved ?? col);
+      return saved ?? col;
+    }
+    return save({ ...metaPatch, tokens: src.tokens }, undefined, src);
+  }
+
   useEffect(() => {
     if (resumeId || mode) return;
     setSavedDrafts([]);
@@ -707,6 +815,30 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     });
   }
 
+  function collectionForGoLive(src: Collection): Collection {
+    const creators = editorCreators(src);
+    return {
+      ...src,
+      royaltyBps,
+      royaltyCreators: creators,
+      symbol: src.symbol,
+      description: src.description,
+      metadataConfirmed: true,
+      tokens: src.tokens.map((token) => ({
+        ...token,
+        sidecar: {
+          present: true,
+          name: token.sidecar?.name,
+          symbol: src.symbol,
+          description: src.description,
+          sellerFeeBps: token.sidecar?.sellerFeeBps ?? royaltyBps,
+          creators: token.sidecar?.creators?.length ? token.sidecar.creators : creators,
+          image: token.sidecar?.image,
+        },
+      })),
+    };
+  }
+
   async function persistDraft(nextStep = step, src = collection) {
     if (!src || !publicKey || !mode) return;
     try {
@@ -721,6 +853,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         royaltyCreators: src.royaltyCreators,
         symbol: src.symbol,
         description: src.description,
+        nameTemplate: src.nameTemplate,
         metadataConfirmed: src.metadataConfirmed,
         buybackTokenCa: src.buybackTokenCa,
         launchDraft: {
@@ -803,15 +936,23 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       if (buybackEnabled && !collection.buybackTokenCa?.trim()) {
         throw new Error("Enter the buyback token contract address (CA) before launch.");
       }
-      const applied = withAppliedMetadata(collection);
-      let current = await save({
-        payments: { ...applied.payments, creatorWallet: payout },
-        royaltyBps,
-        royaltySplit: royaltySplitData,
-        royaltyCreators: applied.royaltyCreators,
-        metadataConfirmed: true,
-        buybackTokenCa: applied.buybackTokenCa?.trim() || undefined,
-      }, undefined, applied);
+      const applied = collectionForGoLive(collection);
+      let current: Collection = applied;
+      if (applied.tokens.length > TOKEN_IMPORT_BATCH_SIZE) {
+        current = (await saveTokenMetadata(applied)) ?? applied;
+      }
+      current =
+        (await save({
+          payments: { ...applied.payments, creatorWallet: payout },
+          royaltyBps,
+          royaltySplit: royaltySplitData,
+          royaltyCreators: applied.royaltyCreators,
+          metadataConfirmed: true,
+          buybackTokenCa: applied.buybackTokenCa?.trim() || undefined,
+          ...(applied.tokens.length <= TOKEN_IMPORT_BATCH_SIZE
+            ? { tokens: applied.tokens }
+            : {}),
+        }, undefined, applied)) ?? current;
       if (!current) return;
 
       if (logoFile) await storeLogoLocally(current.id);
@@ -1127,6 +1268,14 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                       >
                         Continue
                       </Link>
+                      <button
+                        type="button"
+                        disabled={deletingDraftId === c.id}
+                        onClick={() => void deleteSavedLaunch(c)}
+                        className="rounded-lg border border-red-400/40 px-4 py-2 text-sm text-red-300 hover:bg-red-400/10 disabled:opacity-40"
+                      >
+                        {deletingDraftId === c.id ? "Deleting…" : "Delete"}
+                      </button>
                     </li>
                   );
                 })}
@@ -1403,7 +1552,120 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             )}
 
             {metadataReview.samples.length > 0 && (
+              <p className="text-xs text-white/45">
+                Tip: if your ZIP uses 0-based JSON (<code className="text-white/60">0.json</code>…
+                <code className="text-white/60">{`${Math.max(0, metadataReview.tokenCount - 1)}.json`}</code>
+                ), token #{metadataReview.tokenCount} pairs with the highest-numbered file — re-upload the ZIP after deploy if pairing looks wrong.
+              </p>
+            )}
+
+            <div className="space-y-3 border-t border-white/10 pt-4">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-medium text-white">Edit token metadata</h3>
+                  <p className="mt-1 text-xs text-white/50">
+                    Names and royalty bps below are written into each NFT&apos;s Arweave JSON at go-live.
+                  </p>
+                </div>
+                <input
+                  className="input w-48 text-sm"
+                  placeholder="Search # or name…"
+                  value={tokenFilter}
+                  onChange={(e) => {
+                    setTokenFilter(e.target.value);
+                    setTokenPage(0);
+                  }}
+                />
+              </div>
+
               <div className="overflow-x-auto rounded-lg border border-white/10">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-white/5 text-white/50">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">#</th>
+                      <th className="px-3 py-2 font-medium">Name</th>
+                      <th className="px-3 py-2 font-medium">Royalty bps</th>
+                      <th className="px-3 py-2 font-medium">Traits</th>
+                      <th className="px-3 py-2 font-medium">JSON</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedTokens.map((t) => (
+                      <tr key={t.tokenId} className="border-t border-white/10 text-white/80">
+                        <td className="px-3 py-2">{t.tokenId}</td>
+                        <td className="px-3 py-2">
+                          <input
+                            className="input min-w-[12rem] text-xs"
+                            value={t.sidecar?.name ?? tokenMetadataName(collection, t)}
+                            onChange={(e) =>
+                              updateTokenSidecar(t.tokenId, { name: e.target.value })
+                            }
+                            onBlur={() => void saveTokenMetadata()}
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min={0}
+                            max={10000}
+                            className="input w-24 text-xs"
+                            value={t.sidecar?.sellerFeeBps ?? royaltyBps}
+                            onChange={(e) =>
+                              updateTokenSidecar(t.tokenId, {
+                                sellerFeeBps: Number(e.target.value),
+                              })
+                            }
+                            onBlur={() => void saveTokenMetadata()}
+                          />
+                        </td>
+                        <td className="px-3 py-2">{t.attributes.length}</td>
+                        <td className="px-3 py-2">
+                          {t.sidecar?.present ? (
+                            <span className="text-emerald-400">paired</span>
+                          ) : (
+                            <span className="text-[#f5c542]">missing</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {filteredTokens.length > TOKEN_PAGE_SIZE && (
+                <div className="flex items-center justify-between text-xs text-white/50">
+                  <span>
+                    Showing {tokenPage * TOKEN_PAGE_SIZE + 1}–
+                    {Math.min((tokenPage + 1) * TOKEN_PAGE_SIZE, filteredTokens.length)} of{" "}
+                    {filteredTokens.length}
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="rounded border border-white/15 px-2 py-1 disabled:opacity-40"
+                      disabled={tokenPage === 0}
+                      onClick={() => setTokenPage((p) => Math.max(0, p - 1))}
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-white/15 px-2 py-1 disabled:opacity-40"
+                      disabled={tokenPage >= tokenPageCount - 1}
+                      onClick={() => setTokenPage((p) => Math.min(tokenPageCount - 1, p + 1))}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {metadataReview.samples.length > 0 && (
+              <div className="overflow-x-auto rounded-lg border border-white/10 opacity-80">
+                <p className="border-b border-white/10 bg-white/5 px-3 py-2 text-[11px] text-white/45">
+                  Sample preview (first tokens)
+                </p>
                 <table className="w-full text-left text-xs">
                   <thead className="bg-white/5 text-white/50">
                     <tr>
@@ -1435,11 +1697,21 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
             <div className="border-t border-white/10 pt-4">
               <div className="mb-3 flex items-center gap-1 text-sm font-medium text-white">
-                Apply to all tokens
-                <Info tip="These values write into on-chain Core royalties at go-live and into every token's metadata JSON. Creator shares must sum to 100. Payout for primary mints is still the connected wallet on the Payments step." />
+                Collection defaults (apply to all tokens)
+                <Info tip="These values write into on-chain Core royalties at go-live and into every token's metadata JSON unless you override a token above. Creator addresses below are what Core writes on-chain; the destination split routes proceeds off-chain when creator rows are empty." />
               </div>
 
               <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <Field label="Name template">
+                  <input
+                    className="input font-mono text-xs"
+                    value={collection.nameTemplate}
+                    onChange={(e) =>
+                      setCollection({ ...collection, nameTemplate: e.target.value })
+                    }
+                    placeholder="{name} #{id}"
+                  />
+                </Field>
                 <Field label="Symbol">
                   <input
                     className="input"
@@ -1449,7 +1721,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                   />
                 </Field>
                 <div className="flex items-end gap-3">
-                  <label className="text-sm text-white/70">Total royalty</label>
+                  <label className="text-sm text-white/70">Secondary royalty (Metaplex)</label>
                   <div className="flex items-center gap-1">
                     <input
                       type="number"
@@ -1462,7 +1734,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                     />
                     <span className="text-sm text-white/60">%</span>
                   </div>
-                  <span className="text-xs text-white/40">{royaltyBps} bps</span>
+                  <span className="text-xs text-white/40">{royaltyBps} bps → all tokens unless overridden</span>
                 </div>
               </div>
 
@@ -1547,7 +1819,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               <div className="mt-5 border-t border-white/10 pt-4">
                 <div className="mb-3 flex items-center gap-1 text-sm font-medium text-white">
                   Royalty destination split
-                  <Info tip="Optional platform routing of the royalty % above. Used only when you are not listing explicit Metaplex creator addresses, or as a reminder of how you want proceeds split off-chain. Explicit creator addresses above are what Core writes on-chain." />
+                  <Info tip="Used when building metadata creator rows if you leave Metaplex creators empty, and for off-chain fee routing. When creator addresses are filled in above, those addresses are written on-chain instead." />
                 </div>
                 <p className="mb-2 text-xs text-white/50">Distribute royalties to:</p>
                 <div className="space-y-3">
@@ -1637,11 +1909,13 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 onClick={() => {
                   const next = withAppliedMetadata(collection);
                   setCollection(next);
-                  if (publicKey) void persistDraft(step, next);
+                  void saveTokenMetadata(next).then(() => {
+                    if (publicKey) void persistDraft(step, next);
+                  });
                 }}
                 className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm text-white disabled:opacity-40"
               >
-                Apply to all
+                Apply defaults to all tokens
               </button>
               {collection.metadataConfirmed && (
                 <p className="mt-2 text-xs text-emerald-400">Collection-wide metadata confirmed. Mixed sidecar values will not block go-live.</p>

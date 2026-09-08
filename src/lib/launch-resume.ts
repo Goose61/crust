@@ -11,6 +11,14 @@ export function rememberLaunchDraft(wallet: string, collectionId: string): void 
   sessionStorage.setItem(launchResumeStorageKey(wallet), collectionId);
 }
 
+export function forgetLaunchDraft(wallet: string, collectionId?: string): void {
+  if (typeof window === "undefined") return;
+  const key = launchResumeStorageKey(wallet);
+  if (!collectionId || sessionStorage.getItem(key) === collectionId) {
+    sessionStorage.removeItem(key);
+  }
+}
+
 export function readRememberedLaunchDraft(wallet: string): string | null {
   if (typeof window === "undefined") return null;
   return sessionStorage.getItem(launchResumeStorageKey(wallet));

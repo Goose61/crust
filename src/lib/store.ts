@@ -30,6 +30,12 @@ export async function saveCollection(collection: Collection): Promise<Collection
   return collection;
 }
 
+export async function deleteCollection(id: string): Promise<boolean> {
+  const col = await getCollectionsCol();
+  const result = await col.deleteOne({ id });
+  return result.deletedCount > 0;
+}
+
 export async function updateCollection(
   id: string,
   fn: (current: Collection) => Collection | Promise<Collection>,
