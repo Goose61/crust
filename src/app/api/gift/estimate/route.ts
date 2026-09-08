@@ -25,10 +25,14 @@ async function getSolPrice(): Promise<number> {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const imageBytes = Math.max(0, parseInt(url.searchParams.get("imageBytes") ?? "0", 10) || 0);
+  const metadataBytes = Math.max(
+    0,
+    parseInt(url.searchParams.get("metadataBytes") ?? "0", 10) || 0,
+  );
   const devnet = isDevnetNetwork();
 
   const [fees, solPrice] = await Promise.all([
-    estimateGiftFees(imageBytes, devnet),
+    estimateGiftFees(imageBytes, devnet, metadataBytes || undefined),
     getSolPrice(),
   ]);
 

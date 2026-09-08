@@ -5,7 +5,7 @@ import { useWallet } from "@/components/WalletProvider";
 import { explorerClusterQuery, getClientNetwork } from "@/lib/solana-config";
 import { uploadGiftWithPhantom } from "@/lib/irys-client";
 import { readJsonResponse } from "@/lib/fetch-json";
-import { buildGiftMetadataJson, GIFT_NAME } from "@/lib/gift-metadata";
+import { buildGiftMetadataForUpload, GIFT_NAME, parseGiftMetadataFile } from "@/lib/gift-metadata";
 import { giftBundleHref } from "@/lib/gift-bundle";
 
 type FeeBreakdown = {
@@ -76,6 +76,10 @@ export default function GiftPage() {
   const [recipient, setRecipient] = useState("");
   const [mintToSelf, setMintToSelf] = useState(false);
   const [note, setNote] = useState("");
+
+  const [customMetadata, setCustomMetadata] = useState<Record<string, unknown> | null>(null);
+  const [customMetadataFileName, setCustomMetadataFileName] = useState<string | null>(null);
+  const [metadataByteSize, setMetadataByteSize] = useState(0);
 
   const [fees, setFees] = useState<FeeBreakdown | null>(null);
   const [feesLoading, setFeesLoading] = useState(false);
@@ -148,19 +152,50 @@ export default function GiftPage() {
     applyImageFile(e.dataTransfer.files?.[0] ?? null);
   }
 
+  async function applyMetadataFile(next: File | null) {
+    if (!next) return;
+    if (!next.name.toLowerCase().endsWith(".json") && next.type !== "application/json") {
+      setError("Metadata must be a .json file.");
+      return;
+    }
+    try {
+      const text = await next.text();
+      const parsed = parseGiftMetadataFile(text);
+      setCustomMetadata(parsed);
+      setCustomMetadataFileName(next.name);
+      setMetadataByteSize(new TextEncoder().encode(text).length);
+      setError(null);
+    } catch (err) {
+      setCustomMetadata(null);
+      setCustomMetadataFileName(null);
+      setMetadataByteSize(0);
+      setError(err instanceof Error ? err.message : "Could not read metadata JSON.");
+    }
+  }
+
+  function clearCustomMetadata() {
+    setCustomMetadata(null);
+    setCustomMetadataFileName(null);
+    setMetadataByteSize(0);
+  }
+
   useEffect(() => {
     clearTimeout(debounceRef.current);
     if (!imagePayload) { setFees(null); return; }
     setFeesLoading(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/gift/estimate?imageBytes=${imagePayload.size}`);
+        const metaQ =
+          metadataByteSize > 0 ? `&metadataBytes=${metadataByteSize}` : "";
+        const res = await fetch(
+          `/api/gift/estimate?imageBytes=${imagePayload.size}${metaQ}`,
+        );
         if (res.ok) setFees(await res.json());
       } finally {
         setFeesLoading(false);
       }
     }, 400);
-  }, [imagePayload]);
+  }, [imagePayload, metadataByteSize]);
 
   useEffect(() => {
     if (!publicKey || !imagePayload) {
@@ -174,8 +209,10 @@ export default function GiftPage() {
     void (async () => {
       try {
         const network = await getClientNetwork();
+        const metaQ =
+          metadataByteSize > 0 ? `&metadataBytes=${metadataByteSize}` : "";
         const res = await fetch(
-          `/api/gift/balance-check?wallet=${encodeURIComponent(publicKey)}&imageBytes=${imagePayload.size}&network=${network}`,
+          `/api/gift/balance-check?wallet=${encodeURIComponent(publicKey)}&imageBytes=${imagePayload.size}${metaQ}&network=${network}`,
         );
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as BalanceCheck;
@@ -190,7 +227,7 @@ export default function GiftPage() {
     return () => {
       cancelled = true;
     };
-  }, [publicKey, imagePayload]);
+  }, [publicKey, imagePayload, metadataByteSize]);
 
   const insufficientBalance =
     balanceCheck !== null && !balanceCheck.sufficient && !balanceLoading;
@@ -240,15 +277,18 @@ export default function GiftPage() {
         network,
         onStage: (s) => setStage(s === "funding" ? "storage" : "uploading"),
         buildMetadata: (uri) =>
-          buildGiftMetadataJson({
-            name: name.trim() || GIFT_NAME,
-            note: note || undefined,
-            imageUri: uri,
-            imageContentType: imageInfo.contentType,
-            platformCreatorAddress:
-              giftConfig?.platformCreatorAddress ?? publicKey,
-            payerAddress: publicKey,
-          }),
+          buildGiftMetadataForUpload(
+            {
+              name: name.trim() || GIFT_NAME,
+              note: note || undefined,
+              imageUri: uri,
+              imageContentType: imageInfo.contentType,
+              platformCreatorAddress:
+                giftConfig?.platformCreatorAddress ?? publicKey,
+              payerAddress: publicKey,
+            },
+            customMetadata,
+          ),
       });
 
       // ── Step 2: build partially-signed mint tx ────────────────────────
@@ -423,6 +463,7 @@ export default function GiftPage() {
             previewUrlRef.current = null;
             setResult(null); setFile(null); setImagePayload(null); setPreview(null);
             setName(GIFT_NAME); setRecipient(""); setMintToSelf(false); setNote("");
+            clearCustomMetadata();
             setFees(null); setBalanceCheck(null); setError(null); setStage("idle");
           }}
           className="text-sm text-white/40 hover:text-white/70"
@@ -553,6 +594,45 @@ export default function GiftPage() {
             <span className="mb-1 block text-white/50">Note (optional)</span>
             <textarea className="input min-h-20" value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} />
           </label>
+
+          <div className="block text-sm">
+            <span className="mb-1 block text-white/50">Metadata JSON (optional)</span>
+            <p className="mb-2 text-xs text-white/40">
+              Upload a standard NFT metadata file to override name, description, attributes, and
+              royalties. Your uploaded image is always used for the <code className="text-white/50">image</code> field.
+            </p>
+            {customMetadataFileName ? (
+              <div className="flex flex-wrap items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-100/90">
+                <span className="font-mono">{customMetadataFileName}</span>
+                <span className="text-white/40">
+                  {metadataByteSize.toLocaleString()} bytes
+                  {typeof customMetadata?.name === "string" && customMetadata.name.trim()
+                    ? ` · name: ${customMetadata.name.trim()}`
+                    : ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={clearCustomMetadata}
+                  className="ml-auto text-white/50 hover:text-white"
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <label className="flex cursor-pointer items-center justify-center rounded-lg border border-dashed border-white/20 bg-white/5 px-4 py-3 text-xs text-white/50 hover:border-white/35 hover:text-white/70">
+                Choose metadata.json
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    void applyMetadataFile(e.target.files?.[0] ?? null);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            )}
+          </div>
 
           {(imagePayload || fees) && (
             <div className="rounded border border-white/10 bg-white/5 px-4 py-3 text-xs space-y-1.5">

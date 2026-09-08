@@ -41,6 +41,10 @@ export async function GET(req: NextRequest) {
       0,
       parseInt(url.searchParams.get("imageBytes") ?? "0", 10) || 0,
     );
+    const metadataBytes = Math.max(
+      0,
+      parseInt(url.searchParams.get("metadataBytes") ?? "0", 10) || 0,
+    );
     const network = parseNetwork(url.searchParams.get("network"));
 
     if (!wallet || !isValidSolanaAddress(wallet)) {
@@ -48,7 +52,7 @@ export async function GET(req: NextRequest) {
     }
 
     const devnet = network === "devnet";
-    const fees = await estimateGiftFees(imageBytes, devnet);
+    const fees = await estimateGiftFees(imageBytes, devnet, metadataBytes || undefined);
     const rpcUrl = getDirectRpcUrl(network);
     const balanceLamports = await fetchWalletBalanceLamports(rpcUrl, wallet);
     const balanceSol = lamportsToSol(balanceLamports);

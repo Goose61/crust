@@ -33,13 +33,15 @@ export function getMintStepMinLamports(): bigint {
 export async function estimateGiftFees(
   imageBytes: number,
   devnet: boolean,
+  metadataBytes = META_BYTES,
 ): Promise<GiftFeeEstimate> {
   const safeImageBytes = Math.max(0, imageBytes);
+  const safeMetaBytes = Math.max(META_BYTES, metadataBytes);
   const [imageLamports, metaLamports] = await Promise.all([
     safeImageBytes > 0
       ? fetchIrysPriceLamports(safeImageBytes, devnet)
       : Promise.resolve(BigInt(0)),
-    fetchIrysPriceLamports(META_BYTES, devnet),
+    fetchIrysPriceLamports(safeMetaBytes, devnet),
   ]);
 
   const storageLamports = imageLamports + metaLamports;

@@ -89,3 +89,105 @@ export function buildGiftAttributes(note?: string, payer?: string) {
     { trait_type: "Brand", value: GIFT_SYMBOL },
   ];
 }
+
+export const GIFT_CUSTOM_METADATA_MAX_BYTES = 256 * 1024;
+
+/** Parse and validate an optional user-supplied metadata JSON file. */
+export function parseGiftMetadataFile(raw: string): Record<string, unknown> {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("Metadata file is empty.");
+  if (new TextEncoder().encode(trimmed).length > GIFT_CUSTOM_METADATA_MAX_BYTES) {
+    throw new Error("Metadata JSON is too large (max 256 KB).");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error("Metadata file is not valid JSON.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Metadata JSON must be an object (e.g. { \"name\": \"...\", \"attributes\": [] }).");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Merge optional custom metadata with gift defaults.
+ * The uploaded image URI always wins so wallets display the correct asset.
+ */
+export function mergeCustomGiftMetadata(
+  custom: Record<string, unknown>,
+  params: GiftMetadataParams,
+): string {
+  const displayName =
+    typeof custom.name === "string" && custom.name.trim()
+      ? custom.name.trim()
+      : params.name;
+  const mintName = giftMintName(displayName);
+
+  const customProperties = asRecord(custom.properties);
+  const creatorsRaw = customProperties?.creators ?? custom.creators;
+  const creators = Array.isArray(creatorsRaw) && creatorsRaw.length > 0
+    ? creatorsRaw
+    : [{ address: params.platformCreatorAddress, share: 100 }];
+
+  const description =
+    typeof custom.description === "string" && custom.description.trim()
+      ? sanitizeForPhantomMetadata(custom.description)
+      : giftDescription(params.note);
+
+  const attributes = Array.isArray(custom.attributes)
+    ? custom.attributes
+    : buildGiftAttributes(params.note, params.payerAddress);
+
+  const merged: Record<string, unknown> = {
+    ...custom,
+    name: mintName,
+    symbol:
+      typeof custom.symbol === "string" && custom.symbol.trim()
+        ? custom.symbol.trim()
+        : GIFT_SYMBOL,
+    description,
+    image: params.imageUri,
+    external_url:
+      typeof custom.external_url === "string" && custom.external_url.trim()
+        ? custom.external_url.trim()
+        : GIFT_EXTERNAL_URL,
+    seller_fee_basis_points:
+      typeof custom.seller_fee_basis_points === "number"
+        ? custom.seller_fee_basis_points
+        : typeof custom.sellerFeeBasisPoints === "number"
+          ? custom.sellerFeeBasisPoints
+          : 0,
+    attributes,
+    properties: {
+      ...customProperties,
+      files: [
+        {
+          uri: params.imageUri,
+          type: params.imageContentType,
+          cdn: true,
+        },
+      ],
+      category: "image",
+      creators,
+    },
+  };
+
+  return JSON.stringify(merged, null, 2);
+}
+
+/** Build final metadata JSON — custom file or generated defaults. */
+export function buildGiftMetadataForUpload(
+  params: GiftMetadataParams,
+  custom?: Record<string, unknown> | null,
+): string {
+  if (custom) return mergeCustomGiftMetadata(custom, params);
+  return buildGiftMetadataJson(params);
+}
