@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   MILESTONE_EVENTS,
   type Collection,
+  type GeneratedToken,
   type LayerCatalog,
   type MetadataCreator,
   type MilestoneEventId,
@@ -15,12 +16,35 @@ import {
 } from "@/lib/types";
 import { tokenImageSrc } from "@/lib/collection-ui";
 import { buildAuthHeaders } from "@/lib/wallet-auth-client";
-import {
-  pollImportUntilReady,
-  postImportJson,
-  startImportProcess,
-} from "@/lib/upload-collection-zip";
 import { readJsonResponse } from "@/lib/fetch-json";
+import {
+  assetToObjectUrl,
+  estimateArweaveBytes,
+  getImage,
+  getLogo,
+  hasAssets,
+  loadUploadProgress,
+  putLogo,
+  saveUploadProgress,
+} from "@/lib/client-asset-store";
+import { parseReadyArtZip } from "@/lib/client-zip-import";
+import { parseLayerZipClient } from "@/lib/client-layer-import";
+import {
+  generateFullCollectionClient,
+  generatePreviewsClient,
+  revokePreviewUrls,
+} from "@/lib/client-compositor";
+import {
+  buildTokenMetadataForUpload,
+  fetchStorageEstimate,
+  newClientCollectionId,
+  patchCollectionUris,
+  postImportDraft,
+} from "@/lib/client-launch-api";
+import {
+  uploadCollectionWithPhantom,
+} from "@/lib/irys-client";
+import { getClientNetwork } from "@/lib/solana-config";
 import {
   CollectionUploadProgressOverlay,
   type CollectionUploadProgressState,
@@ -184,8 +208,13 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [allowlistMsg, setAllowlistMsg] = useState<string | null>(null);
   const [savedDrafts, setSavedDrafts] = useState<Collection[]>([]);
   const [draftsLoading, setDraftsLoading] = useState(false);
+  const [needsRezip, setNeedsRezip] = useState(false);
+  const [localPreviewUrls, setLocalPreviewUrls] = useState<Map<number, string>>(new Map());
+  const [goLivePhase, setGoLivePhase] = useState<string | null>(null);
+  const [arweaveUploadDetail, setArweaveUploadDetail] = useState<string | null>(null);
 
   const uploadInProgressRef = useRef(false);
+  const rezipInputRef = useRef<HTMLInputElement>(null);
 
   const STEPS = mode ? wizardSteps(mode) : [];
 
@@ -215,8 +244,13 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
   const checklist = useMemo(() => {
     if (!collection) return [];
+    const artReady =
+      mode === "layers"
+        ? collection.layers.length > 0
+        : collection.tokens.length > 0;
     return [
-      { ok: collection.tokens.length > 0, label: "Art uploaded" },
+      { ok: artReady, label: "Art uploaded" },
+      { ok: !collection.clientImport || !needsRezip, label: "Local art files in this browser" },
       { ok: collection.name.trim().length > 1, label: "Name set" },
       { ok: Boolean(collection.payments.creatorWallet || publicKey), label: "Payout wallet" },
       { ok: feesTotal === 100, label: "Mint fee split sums to 100%" },
@@ -235,7 +269,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         label: "Buyback token CA (contract address)",
       },
     ];
-  }, [collection, publicKey, feesTotal, royaltyOwner, royaltyHolders, royaltyBuyback, royaltySplitTotal, buybackEnabled, metadataReview]);
+  }, [collection, publicKey, feesTotal, royaltyOwner, royaltyHolders, royaltyBuyback, royaltySplitTotal, buybackEnabled, metadataReview, mode, needsRezip]);
 
   const uniqueTraits = useMemo(
     () => (collection ? buildUniqueTraits(collection.tokens) : []),
@@ -262,7 +296,52 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       traitPricing: col.traitPricing ?? defaultTraitPricing(col.tokens),
     };
     setCollection(withPricing);
+    void checkLocalAssets(withPricing);
   }
+
+  async function checkLocalAssets(col: Collection) {
+    if (!col.clientImport) {
+      setNeedsRezip(false);
+      return;
+    }
+    const ok = await hasAssets(col.id);
+    setNeedsRezip(!ok);
+  }
+
+  function wizardThumbnailSrc(col: Collection, token: GeneratedToken): string {
+    if (col.clientImport) {
+      const local = localPreviewUrls.get(token.tokenId);
+      if (local) return local;
+    }
+    return tokenImageSrc(col, token);
+  }
+
+  useEffect(() => {
+    if (!collection?.clientImport || collection.tokens.length === 0) return;
+    let cancelled = false;
+    const urlsToRevoke: string[] = [];
+
+    async function loadUrls() {
+      const urls = new Map<number, string>();
+      for (const t of collection!.tokens.slice(0, 12)) {
+        const asset = await getImage(collection!.id, t.tokenId);
+        if (asset) {
+          const url = assetToObjectUrl(asset);
+          urls.set(t.tokenId, url);
+          urlsToRevoke.push(url);
+        }
+      }
+      if (!cancelled) setLocalPreviewUrls(urls);
+    }
+
+    void loadUrls();
+    return () => {
+      cancelled = true;
+      for (const url of urlsToRevoke) {
+        if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+      }
+    };
+  }, [collection?.id, collection?.clientImport, collection?.tokens.length]);
 
   async function bindLaunchSession(
     col: Collection,
@@ -321,7 +400,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           router.push(`/collection/${col.id}`);
           return;
         }
-        if (col.status === "importing") {
+        if (col.status === "importing" && !col.clientImport) {
           setUploadProgress({
             fileName: col.name,
             fileSize: 0,
@@ -331,6 +410,9 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               ? `${col.importProgress.done} / ${col.importProgress.total}`
               : undefined,
           });
+          const { startImportProcess, pollImportUntilReady } = await import(
+            "@/lib/upload-collection-zip",
+          );
           await startImportProcess(col.id, headers).catch(() => undefined);
           col = await pollImportUntilReady(
             col.id,
@@ -398,40 +480,69 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     return buildAuthHeaders(publicKey);
   }
 
-  /* ── upload finished-images ZIP ── */
+  /* ── client-side finished-images ZIP ── */
   async function uploadReadyCollection(file: File) {
     uploadInProgressRef.current = true;
     setBusy(true);
     setError(null);
+    setNeedsRezip(false);
     setUploadProgress({
       fileName: file.name,
       fileSize: file.size,
-      phase: "uploading",
+      phase: "processing",
       percent: 0,
     });
     try {
-      const headers = await authHeadersForUpload();
-      const data = await postImportJson<{ collection: Collection; error?: string }>(
-        "/api/import/images",
+      await authHeadersForUpload();
+      if (!publicKey) throw new Error("Connect a wallet first");
+      const wallet = publicKey;
+
+      const collectionId = newClientCollectionId();
+      const { tokens, sidecarJsonCount } = await parseReadyArtZip(
         file,
-        { name: "My collection", creatorWallet: publicKey ?? "" },
-        setUploadProgress,
-        headers,
-        {
-          onCollectionCreated: (stub) => {
-            void bindLaunchSession(stub, "ready", 0);
-          },
+        collectionId,
+        (p) => {
+          const pct =
+            p.phase === "reading"
+              ? 5
+              : p.phase === "parsing"
+                ? 15
+                : 20 + Math.round((p.done / Math.max(p.total, 1)) * 60);
+          setUploadProgress({
+            fileName: file.name,
+            fileSize: file.size,
+            phase: "processing",
+            percent: pct,
+            detail: p.phase === "storing" ? `${p.done} / ${p.total}` : undefined,
+          });
         },
       );
-      const col: Collection = {
-        ...data.collection,
-        traitPricing: defaultTraitPricing(data.collection.tokens),
+
+      setUploadProgress({
+        fileName: file.name,
+        fileSize: file.size,
+        phase: "processing",
+        percent: 85,
+        detail: "Saving draft…",
+      });
+
+      const col = await postImportDraft(wallet, {
+        id: collectionId,
+        mode: "ready",
+        name: "My collection",
+        tokens,
+        sidecarJsonCount,
+      });
+
+      const withPricing: Collection = {
+        ...col,
+        traitPricing: defaultTraitPricing(col.tokens),
       };
-      setCollection(col);
+      setCollection(withPricing);
       setMode("ready");
-      setRoyaltyBps(col.royaltyBps ?? 500);
+      setRoyaltyBps(withPricing.royaltyBps ?? 500);
       setStep(0);
-      await bindLaunchSession(col, "ready", 0);
+      await bindLaunchSession(withPricing, "ready", 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -441,35 +552,70 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     }
   }
 
-  /* ── upload trait-layer ZIP ── */
+  /* ── client-side trait-layer ZIP ── */
   async function uploadLayers(file: File) {
     uploadInProgressRef.current = true;
     setBusy(true);
     setError(null);
+    setNeedsRezip(false);
     setUploadProgress({
       fileName: file.name,
       fileSize: file.size,
-      phase: "uploading",
+      phase: "processing",
       percent: 0,
     });
     try {
-      const headers = await authHeadersForUpload();
-      const data = await postImportJson<{ collection: Collection; error?: string }>(
-        "/api/layers/parse",
+      await authHeadersForUpload();
+      if (!publicKey) throw new Error("Connect a wallet first");
+      const wallet = publicKey;
+
+      const collectionId = newClientCollectionId();
+      const { layers, stackOrder } = await parseLayerZipClient(
         file,
-        { name: "My collection", creatorWallet: publicKey ?? "" },
-        setUploadProgress,
-        headers,
-        {
-          onCollectionCreated: (stub) => {
-            void bindLaunchSession(stub, "layers", 0);
-          },
+        collectionId,
+        (p) => {
+          const pct =
+            p.phase === "reading"
+              ? 5
+              : p.phase === "parsing"
+                ? 15
+                : 20 + Math.round((p.done / Math.max(p.total, 1)) * 60);
+          setUploadProgress({
+            fileName: file.name,
+            fileSize: file.size,
+            phase: "processing",
+            percent: pct,
+            detail: p.phase === "storing" ? `${p.done} / ${p.total}` : undefined,
+          });
         },
       );
-      setCollection(data.collection);
+
+      const supply = layers.reduce(
+        (acc, l) => acc * Math.max(1, l.values.length),
+        1,
+      );
+
+      setUploadProgress({
+        fileName: file.name,
+        fileSize: file.size,
+        phase: "processing",
+        percent: 85,
+        detail: "Saving draft…",
+      });
+
+      const col = await postImportDraft(wallet, {
+        id: collectionId,
+        mode: "layers",
+        name: "My collection",
+        layers,
+        stackOrder,
+        supply: Math.min(supply, 10_000),
+      });
+
+      setCollection(col);
       setMode("layers");
       setStep(0);
-      await bindLaunchSession(data.collection, "layers", 0);
+      await bindLaunchSession(col, "layers", 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -477,6 +623,26 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       setUploadProgress(null);
       setBusy(false);
     }
+  }
+
+  async function restoreFromRezip(file: File) {
+    if (!collection || !mode) return;
+    if (mode === "ready") {
+      await parseReadyArtZip(file, collection.id, (p) => {
+        setUploadProgress({
+          fileName: file.name,
+          fileSize: file.size,
+          phase: "processing",
+          percent: 20 + Math.round((p.done / Math.max(p.total, 1)) * 70),
+          detail: `${p.done} / ${p.total}`,
+        });
+      });
+    } else {
+      await parseLayerZipClient(file, collection.id);
+    }
+    setNeedsRezip(false);
+    setUploadProgress(null);
+    await checkLocalAssets(collection);
   }
   async function save(patch: Partial<Collection> = {}, action?: string, base?: Collection) {
     const src = base ?? collection;
@@ -548,55 +714,41 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     }
   }
 
-  async function uploadLogo(collectionId: string) {
+  async function storeLogoLocally(collectionId: string) {
     if (!logoFile) return;
-    const form = new FormData();
-    form.set("file", logoFile);
-    const headers: Record<string, string> = {};
-    if (publicKey) Object.assign(headers, await buildAuthHeaders(publicKey));
-    const res = await fetch(`/api/collections/${collectionId}/logo`, {
-      method: "POST",
-      headers,
-      body: form,
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Logo upload failed");
-    if (data.collection) setCollection(data.collection);
+    const buf = await logoFile.arrayBuffer();
+    await putLogo(collectionId, buf, logoFile.type || "image/png");
   }
 
-  /* ── generate previews ── */
+  /* ── generate previews (client compositor) ── */
   async function generatePreviews() {
     if (!collection) return;
     setBusy(true);
     setError(null);
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (publicKey) Object.assign(headers, await buildAuthHeaders(publicKey));
-      const res = await fetch("/api/generate/preview", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          id: collection.id,
-          name: collection.name,
-          description: collection.description,
-          nameTemplate: collection.nameTemplate,
-          symbol: collection.symbol,
-          supply: collection.supply,
-          stackOrder: collection.stackOrder,
-          layers: collection.layers,
-          creatorWallet: publicKey || collection.payments.creatorWallet,
-          royaltyPercent: royaltyBps / 100,
-          previewCount: 12,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      const col: Collection = {
-        ...data.collection,
-        traitPricing: collection.traitPricing ?? defaultTraitPricing(data.collection.tokens),
+      revokePreviewUrls(previews);
+      const royaltySplitData: RoyaltySplit = {
+        ownerPercent: royaltyOwner ? royaltySplit.ownerPercent : 0,
+        holdersPercent: royaltyHolders ? royaltySplit.holdersPercent : 0,
+        buybackPercent: royaltyBuyback ? royaltySplit.buybackPercent : 0,
       };
-      setCollection(col);
-      setPreviews(data.previews);
+      const next = await generatePreviewsClient({
+        collectionId: collection.id,
+        name: collection.name,
+        description: collection.description,
+        nameTemplate: collection.nameTemplate,
+        symbol: collection.symbol,
+        supply: collection.supply,
+        stackOrder: collection.stackOrder,
+        layers: collection.layers,
+        creatorWallet: publicKey || collection.payments.creatorWallet,
+        sellerFeeBps: royaltyBps,
+        royaltySplit: royaltySplitData,
+        royaltyCreators: collection.royaltyCreators,
+        previewCount: 12,
+        uniqueness: true,
+      });
+      setPreviews(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Preview failed");
     } finally {
@@ -613,6 +765,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     }
     setBusy(true);
     setError(null);
+    setGoLivePhase(null);
+    setArweaveUploadDetail(null);
     try {
       const payout = publicKey || collection.payments.creatorWallet;
       const royaltySplitData: RoyaltySplit = {
@@ -633,17 +787,134 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         buybackTokenCa: applied.buybackTokenCa?.trim() || undefined,
       }, undefined, applied);
       if (!current) return;
-      if (logoFile) await uploadLogo(current.id);
-      if (mode === "layers" && current.layers.length > 0) {
-        current = (await save({}, "generate", current)) ?? current;
+
+      if (logoFile) await storeLogoLocally(current.id);
+
+      if (mode === "layers" && current.tokens.length === 0) {
+        setGoLivePhase("Generating collection images in your browser…");
+        const generated = await generateFullCollectionClient({
+          collectionId: current.id,
+          name: current.name,
+          description: current.description,
+          nameTemplate: current.nameTemplate,
+          symbol: current.symbol,
+          supply: current.supply,
+          stackOrder: current.stackOrder,
+          layers: current.layers,
+          creatorWallet: payout,
+          sellerFeeBps: royaltyBps,
+          royaltySplit: royaltySplitData,
+          royaltyCreators: current.royaltyCreators,
+          uniqueness: true,
+          onProgress: (done, total) => {
+            setArweaveUploadDetail(`Generating ${done} / ${total}`);
+          },
+        });
+        current = await save({
+          tokens: generated,
+          traitPricing: defaultTraitPricing(generated),
+        }, undefined, { ...current, tokens: generated }) ?? current;
       }
-      current = (await save({}, "publish", current)) ?? current;
-      current = (await save({ fees: { ...current.fees, locked: true } }, "go-live", current)) ?? current;
+
+      const tokenList = current.tokens;
+      if (tokenList.length === 0) {
+        throw new Error("No tokens to publish");
+      }
+
+      const totalBytes = await estimateArweaveBytes(current.id, tokenList.length);
+      const estimate = await fetchStorageEstimate(publicKey, current.id, totalBytes);
+      setGoLivePhase(
+        `Funding Arweave storage (~${estimate.sol.toFixed(4)} SOL) — approve in your wallet…`,
+      );
+
+      const existingProgress = await loadUploadProgress(current.id);
+      const uploadTokens = [];
+      for (const token of tokenList) {
+        const asset = await getImage(current.id, token.tokenId);
+        if (!asset) {
+          throw new Error(
+            `Missing local image for token #${token.tokenId}. Re-select your ZIP file to restore assets.`,
+          );
+        }
+        uploadTokens.push({
+          tokenId: token.tokenId,
+          imageBytes: new Uint8Array(asset.data),
+          contentType: asset.contentType,
+          buildMetadata: (imageUri: string) =>
+            buildTokenMetadataForUpload(
+              current!,
+              token,
+              imageUri,
+              royaltyBps,
+              royaltySplitData,
+              current!.royaltyCreators,
+            ),
+        });
+      }
+
+      let logoBytes: Uint8Array | undefined;
+      const logoAsset = await getLogo(current.id);
+      if (logoAsset) {
+        logoBytes = new Uint8Array(logoAsset.data);
+      }
+
+      const network = await getClientNetwork();
+      setGoLivePhase("Uploading to Arweave — keep this tab open…");
+
+      const uploaded = await uploadCollectionWithPhantom({
+        collectionId: current.id,
+        tokens: uploadTokens,
+        logoBytes,
+        logoContentType: logoAsset?.contentType,
+        network,
+        existingProgress: existingProgress?.completed,
+        existingLogoUri: existingProgress?.logoUri,
+        onFundNeeded: () => {
+          setGoLivePhase("Approve storage payment in your wallet…");
+        },
+        onProgress: (p) => {
+          if (p.phase === "funding") {
+            setGoLivePhase("Approve storage payment in your wallet…");
+          } else if (p.phase === "uploading-logo") {
+            setArweaveUploadDetail("Uploading logo…");
+          } else {
+            setArweaveUploadDetail(
+              p.tokenId != null
+                ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
+                : `${p.done} / ${p.total} uploads`,
+            );
+          }
+        },
+      });
+
+      await saveUploadProgress(current.id, {
+        completed: uploaded.tokens,
+        logoUri: uploaded.logoUri,
+      });
+
+      const uriRows = tokenList.map((t) => {
+        const u = uploaded.tokens[t.tokenId];
+        if (!u) throw new Error(`Missing upload result for token #${t.tokenId}`);
+        return { tokenId: t.tokenId, imageUri: u.imageUri, metadataUri: u.metadataUri };
+      });
+
+      setGoLivePhase("Saving permanent URIs…");
+      current = await patchCollectionUris(publicKey, current.id, {
+        tokens: uriRows,
+        logoUrl: uploaded.logoUri,
+        irysPublished: true,
+      });
+
+      setGoLivePhase("Creating on-chain collection…");
+      current =
+        (await save({ fees: { ...current.fees, locked: true } }, "go-live", current)) ?? current;
       router.push(`/collection/${current.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Go live failed");
     } finally {
       setBusy(false);
+      setGoLivePhase(null);
+      setArweaveUploadDetail(null);
     }
   }
 
@@ -733,9 +1004,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         <div className="container mx-auto max-w-4xl px-4 py-12">
         <h1 className="text-3xl font-bold text-white">Launch a collection</h1>
         <p className="mt-2 text-sm text-white/60">
-          Connect your wallet first so a long upload is saved to your profile. Both options write
-          permanent on-chain metadata, set your own fee splits, and keep primary mint and secondary
-          trading right here.
+          Connect your wallet first. ZIPs are parsed locally in your browser — nothing is uploaded
+          to our servers until you go live and pay for permanent Arweave storage from your wallet.
         </p>
 
         {error && (
@@ -887,6 +1157,41 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   /* ─────────────────────── WIZARD ─────────────────────── */
   return (
     <div className="container mx-auto max-w-4xl px-4 py-10">
+      <input
+        ref={rezipInputRef}
+        type="file"
+        accept=".zip"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void restoreFromRezip(f);
+          e.target.value = "";
+        }}
+      />
+      {needsRezip && collection?.clientImport && (
+        <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <p className="font-medium">Local art files missing</p>
+          <p className="mt-1 text-amber-100/80">
+            Your draft settings are saved, but image files are stored in this browser only. Re-select
+            the same ZIP to restore previews before going live.
+          </p>
+          <button
+            type="button"
+            onClick={() => rezipInputRef.current?.click()}
+            className="mt-3 rounded-lg bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-50 hover:bg-amber-500/30"
+          >
+            Re-select ZIP file
+          </button>
+        </div>
+      )}
+      {goLivePhase && (
+        <div className="mb-6 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-white">
+          <p>{goLivePhase}</p>
+          {arweaveUploadDetail && (
+            <p className="mt-1 text-xs text-white/60">{arweaveUploadDetail}</p>
+          )}
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <button
           onClick={() => {
@@ -1374,7 +1679,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 {collection.tokens.slice(0, 12).map((t) => (
                   <div key={t.tokenId} className="aspect-square overflow-hidden rounded-lg bg-white/5">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={tokenImageSrc(collection, t)} alt={`#${t.tokenId}`}
+                    <img src={wizardThumbnailSrc(collection, t)} alt={`#${t.tokenId}`}
                       className="h-full w-full object-cover" />
                   </div>
                 ))}
@@ -1746,7 +2051,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 </div>
               </div>
               <p className="mt-3 text-[11px] text-white/35">
-                Storage is estimated at ~$0.006/MB on Arweave. No Crypgo launch fee — marketplace takes{" "}
+                Arweave storage is paid from your connected wallet at go-live (~$0.006/MB). Keep this
+                tab open during upload. No Crypgo launch fee — marketplace takes{" "}
                 {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint ({PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax)
                 and {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales only.
               </p>
@@ -1805,7 +2111,9 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
             <button disabled={busy || !checklist.every((c) => c.ok)} onClick={() => void goLive()}
               className="w-full rounded-xl bg-primary py-3.5 text-sm font-semibold text-white disabled:opacity-40">
-              {busy ? "Publishing to Arweave & going live…" : "🚀 Go live"}
+              {busy
+                ? goLivePhase ?? "Uploading to Arweave & going live…"
+                : "🚀 Go live (pay storage from wallet)"}
             </button>
             <p className="text-center text-xs text-white/35">
               Fees lock permanently at launch. You can still update socials, name, and description after going live.

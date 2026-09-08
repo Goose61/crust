@@ -318,6 +318,8 @@ export type Collection = {
   importProgress?: ImportProgress;
   /** Wizard UI snapshot so a creator can resume /launch?id= from the dashboard. */
   launchDraft?: LaunchDraftState;
+  /** Draft imported via browser ZIP parse + IndexedDB (no Vercel Blob staging). */
+  clientImport?: boolean;
   createdAt: string;
   updatedAt: string;
   tokens: GeneratedToken[];

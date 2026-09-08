@@ -83,6 +83,12 @@ export async function POST(req: NextRequest) {
   if (body.name) merged.slug = slugify(body.name);
 
   if (body.action === "generate") {
+    if (merged.clientImport) {
+      return NextResponse.json(
+        { error: "Client-import collections generate in the browser at go-live" },
+        { status: 400 },
+      );
+    }
     try {
       merged.tokens = await generateCollection({
         collectionId: merged.id,
@@ -106,13 +112,22 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.action === "publish") {
-    const withMeta = await refreshCollectionMetadata(merged);
-    merged.tokens = withMeta.tokens;
-    const published = await publishCollection(merged);
-    merged.tokens = published.tokens;
-    merged.irysPublished = published.provider === "arweave";
-    if (merged.blindMint) {
-      merged.placeholderUri = `/api/assets/${merged.id}/placeholder`;
+    if (merged.clientImport) {
+      if (!merged.irysPublished || !merged.tokens.every((t) => t.metadataUri?.startsWith("http"))) {
+        return NextResponse.json(
+          { error: "Upload collection assets to Arweave from your wallet before go-live" },
+          { status: 400 },
+        );
+      }
+    } else {
+      const withMeta = await refreshCollectionMetadata(merged);
+      merged.tokens = withMeta.tokens;
+      const published = await publishCollection(merged);
+      merged.tokens = published.tokens;
+      merged.irysPublished = published.provider === "arweave";
+      if (merged.blindMint) {
+        merged.placeholderUri = `/api/assets/${merged.id}/placeholder`;
+      }
     }
   }
 

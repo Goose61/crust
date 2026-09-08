@@ -357,6 +357,137 @@ export async function uploadGiftWithPhantom(params: {
   return { imageUri, metadataUri };
 }
 
+export async function estimateCollectionStorageLamports(
+  totalBytes: number,
+  network?: SolanaNetwork,
+): Promise<bigint> {
+  const net = network ?? (await getClientNetwork());
+  const { fetchIrysPriceLamports } = await import("./irys-shared");
+  return fetchIrysPriceLamports(totalBytes, isDevnetNetwork(net));
+}
+
+export type CollectionUploadToken = {
+  tokenId: number;
+  imageBytes: Uint8Array;
+  contentType: string;
+  buildMetadata: (imageUri: string) => string;
+};
+
+export type CollectionUploadProgress = {
+  done: number;
+  total: number;
+  phase: "funding" | "uploading-image" | "uploading-metadata" | "uploading-logo";
+  tokenId?: number;
+};
+
+/** Upload an entire collection to Arweave from the creator wallet. */
+export async function uploadCollectionWithPhantom(params: {
+  collectionId: string;
+  tokens: CollectionUploadToken[];
+  logoBytes?: Uint8Array;
+  logoContentType?: string;
+  network?: SolanaNetwork;
+  onProgress?: (p: CollectionUploadProgress) => void;
+  onFundNeeded?: (lamports: bigint) => void;
+  existingProgress?: Record<number, { imageUri: string; metadataUri: string }>;
+  existingLogoUri?: string;
+}): Promise<{
+  tokens: Record<number, { imageUri: string; metadataUri: string }>;
+  logoUri?: string;
+}> {
+  const network = params.network ?? (await getClientNetwork());
+  const confirmRpc = getRpcUrl(network);
+  const phantom = getPhantomProvider();
+  if (!phantom?.publicKey) throw new Error("Connect a wallet first.");
+
+  const irys = await createPhantomIrysUploader(network);
+  const completed: Record<number, { imageUri: string; metadataUri: string }> = {
+    ...(params.existingProgress ?? {}),
+  };
+  let logoUri = params.existingLogoUri;
+
+  const pending = params.tokens.filter((t) => !completed[t.tokenId]);
+  const totalSteps =
+    pending.length * 2 +
+    (params.logoBytes && !logoUri ? 1 : 0);
+  let done = Object.keys(completed).length * 2 + (logoUri ? 1 : 0);
+
+  if (pending.length > 0 || (params.logoBytes && !logoUri)) {
+    const totalBytes =
+      pending.reduce((s, t) => s + t.imageBytes.length + 900, 0) +
+      (params.logoBytes && !logoUri ? params.logoBytes.length : 0);
+    params.onProgress?.({ done, total: totalSteps, phase: "funding" });
+    const price = await irys.getPrice(totalBytes);
+    const balance = await irys.getBalance();
+    if (balance.lt(price)) {
+      const priceBn = BigInt(price.toString());
+      const balanceBn = BigInt(balance.toString());
+      const deficit = priceBn > balanceBn ? priceBn - balanceBn : 0n;
+      const toFund = deficit + deficit / 10n + 1n;
+      params.onFundNeeded?.(toFund);
+      await fundIrysAccount({
+        amountLamports: toFund,
+        phantom,
+        rpcUrl: confirmRpc,
+        devnet: isDevnetNetwork(network),
+        network,
+      });
+    }
+  }
+
+  for (const token of pending) {
+    params.onProgress?.({
+      done,
+      total: totalSteps,
+      phase: "uploading-image",
+      tokenId: token.tokenId,
+    });
+    const imageUri = await uploadWithPhantom(
+      irys,
+      token.imageBytes,
+      token.contentType,
+      phantom,
+      confirmRpc,
+      network,
+    );
+    done += 1;
+
+    params.onProgress?.({
+      done,
+      total: totalSteps,
+      phase: "uploading-metadata",
+      tokenId: token.tokenId,
+    });
+    const metadataUri = await uploadWithPhantom(
+      irys,
+      new TextEncoder().encode(token.buildMetadata(imageUri)),
+      "application/json",
+      phantom,
+      confirmRpc,
+      network,
+    );
+    done += 1;
+
+    completed[token.tokenId] = { imageUri, metadataUri };
+  }
+
+  if (params.logoBytes && !logoUri) {
+    params.onProgress?.({ done, total: totalSteps, phase: "uploading-logo" });
+    logoUri = await uploadWithPhantom(
+      irys,
+      params.logoBytes,
+      params.logoContentType ?? "image/png",
+      phantom,
+      confirmRpc,
+      network,
+    );
+    done += 1;
+  }
+
+  params.onProgress?.({ done: totalSteps, total: totalSteps, phase: "uploading-metadata" });
+  return { tokens: completed, logoUri };
+}
+
 export function networkLabel(network: SolanaNetwork): string {
   return network === "mainnet" ? "Mainnet" : "Devnet";
 }
