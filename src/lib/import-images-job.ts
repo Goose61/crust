@@ -14,6 +14,7 @@ import { type Collection, type GeneratedToken } from "@/lib/types";
 import { buildImportingCollectionStub } from "@/lib/import-collection-stub";
 import { deleteCollectionUploadZip } from "@/lib/blob-cleanup";
 import { parseSidecarJson, seedCollectionFromSidecars } from "@/lib/metadata-review";
+import { findSidecarPath } from "@/lib/sidecar-matching";
 
 const PROGRESS_EVERY = 5;
 
@@ -24,29 +25,6 @@ export type ImageImportParams = {
   description: string;
   creatorWallet: string;
 };
-
-function findSidecarPath(
-  entryPath: string,
-  tokenId: number,
-  jsonPaths: Set<string>,
-): string | undefined {
-  const nextToImage = entryPath.replace(/\.(png|jpe?g|webp)$/i, ".json");
-  if (jsonPaths.has(nextToImage)) return nextToImage;
-  const padded = String(tokenId).padStart(3, "0");
-  const suffixes = [
-    `metadata/${tokenId}.json`,
-    `metadata/${padded}.json`,
-    `${tokenId}.json`,
-    `${padded}.json`,
-  ];
-  for (const candidate of jsonPaths) {
-    const norm = candidate.replace(/\\/g, "/");
-    if (suffixes.some((suffix) => norm === suffix || norm.endsWith(`/${suffix}`))) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
 
 async function loadSidecar(
   zipPath: string,

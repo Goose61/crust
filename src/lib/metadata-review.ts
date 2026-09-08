@@ -134,10 +134,15 @@ export function reviewCollectionMetadata(collection: Collection): MetadataReview
     issues.push({ severity: "error", code: "no-tokens", message: "No NFTs in this collection yet." });
   }
   if (missingSidecarCount > 0 && missingSidecarCount < tokens.length) {
+    const missingIds = tokens.filter((t) => !t.sidecar?.present).map((t) => t.tokenId);
+    const idList =
+      missingIds.length <= 6
+        ? missingIds.map((id) => `#${id}`).join(", ")
+        : `${missingIds.slice(0, 6).map((id) => `#${id}`).join(", ")} (+${missingIds.length - 6} more)`;
     issues.push({
       severity: "warning",
       code: "partial-sidecars",
-      message: `${missingSidecarCount} of ${tokens.length} images have no sidecar JSON.`,
+      message: `${missingSidecarCount} of ${tokens.length} images have no paired sidecar JSON (${idList}). Each image needs a .json with the same number/name, or re-upload the ZIP after fixing the mismatch.`,
     });
   }
   if (tokens.length > 0 && missingSidecarCount === tokens.length) {

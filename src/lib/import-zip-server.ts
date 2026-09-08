@@ -6,6 +6,7 @@ import os from "os";
 import path from "path";
 import JSZip from "jszip";
 import yauzl from "yauzl";
+import { isTokenSidecarJsonPath } from "@/lib/sidecar-matching";
 
 export function isBlobZipUrl(url: string): boolean {
   try {
@@ -103,7 +104,7 @@ export async function scanZipArchive(zipPath: string): Promise<{
       }
       if (/\.(png|jpe?g|webp)$/i.test(name)) {
         images.push({ fileName: name });
-      } else if (/\.json$/i.test(name)) {
+      } else if (/\.json$/i.test(name) && isTokenSidecarJsonPath(name)) {
         jsonPaths.add(name);
       }
       zipfile.readEntry();

@@ -5,6 +5,7 @@
 import JSZip from "jszip";
 import { assignRarityRanks } from "@/lib/rarity";
 import { parseSidecarJson } from "@/lib/metadata-review";
+import { findSidecarPath, isTokenSidecarJsonPath } from "@/lib/sidecar-matching";
 import { putImage } from "@/lib/client-asset-store";
 import type { GeneratedToken } from "@/lib/types";
 
@@ -17,29 +18,6 @@ export type ClientZipImportProgress = {
   done: number;
   total: number;
 };
-
-function findSidecarPath(
-  entryPath: string,
-  tokenId: number,
-  jsonPaths: Set<string>,
-): string | undefined {
-  const nextToImage = entryPath.replace(/\.(png|jpe?g|webp)$/i, ".json");
-  if (jsonPaths.has(nextToImage)) return nextToImage;
-  const padded = String(tokenId).padStart(3, "0");
-  const suffixes = [
-    `metadata/${tokenId}.json`,
-    `metadata/${padded}.json`,
-    `${tokenId}.json`,
-    `${padded}.json`,
-  ];
-  for (const candidate of jsonPaths) {
-    const norm = candidate.replace(/\\/g, "/");
-    if (suffixes.some((suffix) => norm === suffix || norm.endsWith(`/${suffix}`))) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
 
 function contentTypeForExt(ext: string): string {
   const e = ext.toLowerCase();
@@ -106,7 +84,8 @@ export async function parseReadyArtZip(
       (p) =>
         p.toLowerCase().endsWith(".json") &&
         !p.includes("__MACOSX") &&
-        !zip.files[p]?.dir,
+        !zip.files[p]?.dir &&
+        isTokenSidecarJsonPath(p),
     ),
   );
 
