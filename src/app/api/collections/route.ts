@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     sidecarJsonCount: body.sidecarJsonCount ?? existing.sidecarJsonCount,
     metadataConfirmed: body.metadataConfirmed ?? existing.metadataConfirmed,
     launchDraft: body.launchDraft ?? existing.launchDraft,
-    tokens: existing.tokens,
+    tokens: Array.isArray(body.tokens) ? body.tokens : existing.tokens,
     pendingMint: existing.pendingMint,
     pendingZipUrl: existing.pendingZipUrl,
   };

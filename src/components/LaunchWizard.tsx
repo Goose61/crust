@@ -15,7 +15,7 @@ import {
   type TraitRarity,
 } from "@/lib/types";
 import { tokenImageSrc } from "@/lib/collection-ui";
-import { buildAuthHeaders } from "@/lib/wallet-auth-client";
+import { buildAuthHeaders, AUTH_TTL_MS } from "@/lib/wallet-auth-client";
 import { readJsonResponse } from "@/lib/fetch-json";
 import {
   assetToObjectUrl,
@@ -40,6 +40,7 @@ import {
   newClientCollectionId,
   patchCollectionUris,
   postImportDraft,
+  postImportDraftWithTokens,
 } from "@/lib/client-launch-api";
 import {
   uploadCollectionWithPhantom,
@@ -208,6 +209,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [allowlistMsg, setAllowlistMsg] = useState<string | null>(null);
   const [savedDrafts, setSavedDrafts] = useState<Collection[]>([]);
   const [draftsLoading, setDraftsLoading] = useState(false);
+  const [draftsLoaded, setDraftsLoaded] = useState(false);
   const [needsRezip, setNeedsRezip] = useState(false);
   const [localPreviewUrls, setLocalPreviewUrls] = useState<Map<number, string>>(new Map());
   const [goLivePhase, setGoLivePhase] = useState<string | null>(null);
@@ -347,6 +349,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     col: Collection,
     launchMode: "ready" | "layers",
     nextStep = 0,
+    authHeaders?: Record<string, string>,
   ): Promise<Collection> {
     if (!publicKey) return col;
     rememberLaunchDraft(publicKey, col.id);
@@ -354,8 +357,18 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
     const initial = buildInitialLaunchDraft(launchMode, col.royaltyBps ?? royaltyBps);
     try {
-      const saved = await save(
-        {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (publicKey) {
+        Object.assign(
+          headers,
+          authHeaders ?? (await buildAuthHeaders(publicKey)),
+        );
+      }
+      const res = await fetch("/api/collections", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          id: col.id,
           payments: { ...col.payments, creatorWallet: col.payments.creatorWallet || publicKey },
           royaltyBps: col.royaltyBps ?? royaltyBps,
           launchDraft: {
@@ -366,11 +379,12 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             royaltyHolders,
             royaltyBuyback,
           },
-        },
-        undefined,
-        col,
-      );
-      return saved ?? col;
+        }),
+      });
+      const data = await readJsonResponse<{ collection: Collection; error?: string }>(res);
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      setCollection(data.collection);
+      return data.collection;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save launch progress");
       return col;
@@ -440,39 +454,37 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     };
   }, [resumeId, publicKey, router, mode]);
 
-  useEffect(() => {
-    if (resumeId || mode || !publicKey) {
-      setSavedDrafts([]);
+  async function loadSavedDrafts() {
+    if (!publicKey) {
+      await connect();
       return;
     }
-    const wallet = publicKey;
-    let cancelled = false;
-
-    async function loadDrafts() {
-      setDraftsLoading(true);
-      try {
-        const headers = await buildAuthHeaders(wallet);
-        const res = await fetch("/api/collections", { headers });
-        const data = await readJsonResponse<{ collections: Collection[] }>(res);
-        if (cancelled) return;
-        const mine = (data.collections ?? []).filter(
-          (c) => c.payments.creatorWallet === wallet && isContinuableLaunch(c),
-        );
-        setSavedDrafts(mine);
-      } catch {
-        if (!cancelled) setSavedDrafts([]);
-      } finally {
-        if (!cancelled) setDraftsLoading(false);
-      }
+    setDraftsLoading(true);
+    setError(null);
+    try {
+      const headers = await buildAuthHeaders(publicKey);
+      const res = await fetch("/api/collections", { headers });
+      const data = await readJsonResponse<{ collections: Collection[] }>(res);
+      const mine = (data.collections ?? []).filter(
+        (c) => c.payments.creatorWallet === publicKey && isContinuableLaunch(c),
+      );
+      setSavedDrafts(mine);
+      setDraftsLoaded(true);
+    } catch (e) {
+      setSavedDrafts([]);
+      setError(e instanceof Error ? e.message : "Could not load saved launches");
+    } finally {
+      setDraftsLoading(false);
     }
+  }
 
-    void loadDrafts();
-    return () => {
-      cancelled = true;
-    };
+  useEffect(() => {
+    if (resumeId || mode) return;
+    setSavedDrafts([]);
+    setDraftsLoaded(false);
   }, [resumeId, mode, publicKey]);
 
-  async function authHeadersForUpload() {
+  async function authHeadersForUpload(): Promise<Record<string, string>> {
     if (!publicKey) {
       await connect();
       throw new Error("Connect a wallet to save this launch to your wallet");
@@ -493,9 +505,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       percent: 0,
     });
     try {
-      await authHeadersForUpload();
-      if (!publicKey) throw new Error("Connect a wallet first");
-      const wallet = publicKey;
+      const authHeaders = await authHeadersForUpload();
+      const wallet = publicKey!;
 
       const collectionId = newClientCollectionId();
       const { tokens, sidecarJsonCount } = await parseReadyArtZip(
@@ -507,7 +518,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               ? 5
               : p.phase === "parsing"
                 ? 15
-                : 20 + Math.round((p.done / Math.max(p.total, 1)) * 60);
+                : 20 + Math.round((p.done / Math.max(p.total, 1)) * 50);
           setUploadProgress({
             fileName: file.name,
             fileSize: file.size,
@@ -522,17 +533,29 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         fileName: file.name,
         fileSize: file.size,
         phase: "processing",
-        percent: 85,
-        detail: "Saving draft…",
+        percent: 75,
+        detail: "Saving draft to your profile…",
       });
 
-      const col = await postImportDraft(wallet, {
-        id: collectionId,
-        mode: "ready",
-        name: "My collection",
-        tokens,
-        sidecarJsonCount,
-      });
+      const col = await postImportDraftWithTokens(
+        wallet,
+        {
+          id: collectionId,
+          name: "My collection",
+          tokens,
+          sidecarJsonCount,
+          onBatchProgress: (done, total) => {
+            setUploadProgress({
+              fileName: file.name,
+              fileSize: file.size,
+              phase: "processing",
+              percent: 75 + Math.round((done / total) * 20),
+              detail: `Saving metadata ${done} / ${total}`,
+            });
+          },
+        },
+        authHeaders,
+      );
 
       const withPricing: Collection = {
         ...col,
@@ -542,7 +565,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       setMode("ready");
       setRoyaltyBps(withPricing.royaltyBps ?? 500);
       setStep(0);
-      await bindLaunchSession(withPricing, "ready", 0);
+      await bindLaunchSession(withPricing, "ready", 0, authHeaders);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -565,9 +588,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       percent: 0,
     });
     try {
-      await authHeadersForUpload();
-      if (!publicKey) throw new Error("Connect a wallet first");
-      const wallet = publicKey;
+      const authHeaders = await authHeadersForUpload();
+      const wallet = publicKey!;
 
       const collectionId = newClientCollectionId();
       const { layers, stackOrder } = await parseLayerZipClient(
@@ -603,19 +625,23 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         detail: "Saving draft…",
       });
 
-      const col = await postImportDraft(wallet, {
-        id: collectionId,
-        mode: "layers",
-        name: "My collection",
-        layers,
-        stackOrder,
-        supply: Math.min(supply, 10_000),
-      });
+      const col = await postImportDraft(
+        wallet,
+        {
+          id: collectionId,
+          mode: "layers",
+          name: "My collection",
+          layers,
+          stackOrder,
+          supply: Math.min(supply, 10_000),
+        },
+        authHeaders,
+      );
 
       setCollection(col);
       setMode("layers");
       setStep(0);
-      await bindLaunchSession(col, "layers", 0);
+      await bindLaunchSession(col, "layers", 0, authHeaders);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -658,7 +684,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     const res = await fetch("/api/collections", {
       method: "POST",
       headers,
-      body: JSON.stringify({ ...src, ...patch, action }),
+      body: JSON.stringify({ id: src.id, ...patch, action }),
     });
     const data = await readJsonResponse<{ collection: Collection; error?: string }>(res);
     if (!res.ok) throw new Error(data.error || "Save failed");
@@ -1024,6 +1050,35 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           </button>
         )}
 
+        {publicKey && (
+          <div className="mt-6 rounded-xl border border-white/15 bg-white/5 p-4 text-sm text-white/70">
+            <p className="font-medium text-white">Wallet signature (not a payment)</p>
+            <p className="mt-2 leading-relaxed">
+              When you upload a ZIP or load saved drafts, your wallet will ask you to{" "}
+              <strong className="text-white/90">sign a short message</strong> (starts with{" "}
+              &quot;Dough Boi Auth&quot;). This proves you own the wallet — it does{" "}
+              <strong className="text-white/90">not</strong> move SOL or charge fees. One signature
+              is cached for about {Math.round(AUTH_TTL_MS / 60000)} minutes. Arweave storage is only
+              paid when you click Go live.
+            </p>
+          </div>
+        )}
+
+        {publicKey && !draftsLoaded && !draftsLoading && (
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={() => void loadSavedDrafts()}
+              className="rounded-lg border border-white/20 px-4 py-2 text-sm text-white hover:border-white/40"
+            >
+              Load my saved launches
+            </button>
+            <p className="mt-2 text-xs text-white/40">
+              Requires one wallet signature to list in-progress drafts tied to your wallet.
+            </p>
+          </div>
+        )}
+
         {publicKey && (savedDrafts.length > 0 || draftsLoading) && (
           <div className="mt-8 rounded-2xl border border-primary/30 bg-primary/5 p-5">
             <h2 className="text-lg font-semibold text-white">Continue a saved launch</h2>
@@ -1117,6 +1172,11 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadReadyCollection(f); }}
               />
             </label>
+            {publicKey && (
+              <p className="mt-2 text-center text-xs text-white/40">
+                You will be asked to sign once to save this draft (no SOL charge).
+              </p>
+            )}
           </div>
 
           {/* Trait layers */}
@@ -1147,6 +1207,11 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadLayers(f); }}
               />
             </label>
+            {publicKey && (
+              <p className="mt-2 text-center text-xs text-white/40">
+                You will be asked to sign once to save this draft (no SOL charge).
+              </p>
+            )}
           </div>
         </div>
       </div>

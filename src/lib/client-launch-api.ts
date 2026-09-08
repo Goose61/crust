@@ -3,6 +3,8 @@ import { buildAuthHeaders } from "@/lib/wallet-auth-client";
 import { readJsonResponse } from "@/lib/fetch-json";
 import type { Collection, GeneratedToken, LayerCatalog, MetadataCreator, RoyaltySplit } from "@/lib/types";
 
+export const TOKEN_IMPORT_BATCH_SIZE = 75;
+
 export function newClientCollectionId(): string {
   return crypto.randomUUID();
 }
@@ -20,10 +22,11 @@ export async function postImportDraft(
     sidecarJsonCount?: number;
     supply?: number;
   },
+  authHeaders?: Record<string, string>,
 ): Promise<Collection> {
   const headers = {
     "Content-Type": "application/json",
-    ...(await buildAuthHeaders(wallet)),
+    ...(authHeaders ?? (await buildAuthHeaders(wallet))),
   };
   const res = await fetch("/api/collections/import-draft", {
     method: "POST",
@@ -35,6 +38,73 @@ export async function postImportDraft(
   return data.collection;
 }
 
+export async function importTokenBatch(
+  wallet: string,
+  collectionId: string,
+  tokens: GeneratedToken[],
+  options: {
+    finalize?: boolean;
+    sidecarJsonCount?: number;
+    authHeaders?: Record<string, string>;
+  } = {},
+): Promise<Collection> {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.authHeaders ?? (await buildAuthHeaders(wallet))),
+  };
+  const res = await fetch(`/api/collections/${collectionId}/import-tokens`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      tokens,
+      finalize: options.finalize,
+      sidecarJsonCount: options.sidecarJsonCount,
+    }),
+  });
+  const data = await readJsonResponse<{ collection: Collection; error?: string }>(res);
+  if (!res.ok) throw new Error(data.error || "Could not save token batch");
+  return data.collection;
+}
+
+/** Create draft stub then upload tokens in batches (avoids Vercel body-size limits). */
+export async function postImportDraftWithTokens(
+  wallet: string,
+  params: {
+    id: string;
+    name: string;
+    tokens: GeneratedToken[];
+    sidecarJsonCount: number;
+    onBatchProgress?: (done: number, total: number) => void;
+  },
+  authHeaders?: Record<string, string>,
+): Promise<Collection> {
+  const headers = authHeaders ?? (await buildAuthHeaders(wallet));
+  let col = await postImportDraft(
+    wallet,
+    {
+      id: params.id,
+      mode: "ready",
+      name: params.name,
+      supply: params.tokens.length,
+      sidecarJsonCount: params.sidecarJsonCount,
+    },
+    headers,
+  );
+
+  const total = params.tokens.length;
+  for (let i = 0; i < total; i += TOKEN_IMPORT_BATCH_SIZE) {
+    const batch = params.tokens.slice(i, i + TOKEN_IMPORT_BATCH_SIZE);
+    const finalize = i + batch.length >= total;
+    col = await importTokenBatch(wallet, params.id, batch, {
+      finalize,
+      sidecarJsonCount: params.sidecarJsonCount,
+      authHeaders: headers,
+    });
+    params.onBatchProgress?.(Math.min(i + batch.length, total), total);
+  }
+  return col;
+}
+
 export async function patchCollectionUris(
   wallet: string,
   collectionId: string,
@@ -43,10 +113,11 @@ export async function patchCollectionUris(
     logoUrl?: string;
     irysPublished?: boolean;
   },
+  authHeaders?: Record<string, string>,
 ): Promise<Collection> {
   const headers = {
     "Content-Type": "application/json",
-    ...(await buildAuthHeaders(wallet)),
+    ...(authHeaders ?? (await buildAuthHeaders(wallet))),
   };
   const res = await fetch(`/api/collections/${collectionId}/uris`, {
     method: "PATCH",
@@ -90,8 +161,9 @@ export async function fetchStorageEstimate(
   wallet: string,
   collectionId: string,
   totalBytes: number,
+  authHeaders?: Record<string, string>,
 ): Promise<{ lamports: string; sol: number }> {
-  const headers = await buildAuthHeaders(wallet);
+  const headers = authHeaders ?? (await buildAuthHeaders(wallet));
   const res = await fetch(
     `/api/collections/${collectionId}/storage-estimate?totalBytes=${totalBytes}`,
     { headers },

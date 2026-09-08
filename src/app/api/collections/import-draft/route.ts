@@ -8,6 +8,7 @@ import type { Collection, GeneratedToken, LayerCatalog } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type ImportDraftBody = {
   id?: string;
@@ -64,15 +65,21 @@ export async function POST(req: NextRequest) {
         imageUri: undefined,
         metadataUri: undefined,
       }));
-      if (tokens.length === 0) {
-        return NextResponse.json({ error: "tokens required for ready mode" }, { status: 400 });
+      if (tokens.length > 0) {
+        collection = seedCollectionFromSidecars(
+          collection,
+          tokens,
+          body.sidecarJsonCount ?? 0,
+        );
+        collection.supply = tokens.length;
+      } else if (body.supply != null && body.supply > 0) {
+        collection.supply = body.supply;
+      } else {
+        return NextResponse.json(
+          { error: "supply required when tokens are uploaded separately" },
+          { status: 400 },
+        );
       }
-      collection = seedCollectionFromSidecars(
-        collection,
-        tokens,
-        body.sidecarJsonCount ?? 0,
-      );
-      collection.supply = tokens.length;
     } else {
       collection.layers = body.layers ?? [];
       collection.stackOrder = body.stackOrder ?? [];
@@ -83,8 +90,12 @@ export async function POST(req: NextRequest) {
     await saveCollection(collection);
     return NextResponse.json({ collection: toPublicCollection(collection) });
   } catch (e) {
+    console.error("[POST /api/collections/import-draft]", e);
     const message = e instanceof Error ? e.message : "Import draft failed";
-    const status = message.includes("signature") || message.includes("Wallet") ? 401 : 400;
+    const status =
+      message.includes("signature") || message.includes("Wallet")
+        ? 401
+        : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
