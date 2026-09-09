@@ -136,17 +136,23 @@ const MILESTONE_DESC: Partial<Record<MilestoneEventId, string>> = {
 type Mode = "ready" | "layers" | null;
 
 function buildUniqueTraits(tokens: Collection["tokens"]) {
-  const map = new Map<string, Set<string>>();
+  const map = new Map<string, Map<string, number[]>>();
   for (const t of tokens) {
     for (const a of t.attributes) {
       if (a.trait_type === "Rarity Rank") continue;
-      if (!map.has(a.trait_type)) map.set(a.trait_type, new Set());
-      map.get(a.trait_type)!.add(String(a.value));
+      const val = String(a.value);
+      if (!map.has(a.trait_type)) map.set(a.trait_type, new Map());
+      const byVal = map.get(a.trait_type)!;
+      if (!byVal.has(val)) byVal.set(val, []);
+      const examples = byVal.get(val)!;
+      if (examples.length < 2) examples.push(t.tokenId);
     }
   }
-  return Array.from(map.entries()).map(([traitType, vals]) => ({
+  return Array.from(map.entries()).map(([traitType, byVal]) => ({
     traitType,
-    values: Array.from(vals).sort(),
+    values: Array.from(byVal.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([value, examples]) => ({ value, examples })),
   }));
 }
 
@@ -154,8 +160,8 @@ function defaultTraitPricing(tokens: Collection["tokens"]): TraitPricing {
   const pricing: TraitPricing = {};
   for (const { traitType, values } of buildUniqueTraits(tokens)) {
     pricing[traitType] = {};
-    for (const v of values) {
-      pricing[traitType][v] = { rarity: "common", priceModifier: 0 };
+    for (const { value } of values) {
+      pricing[traitType][value] = { rarity: "common", priceModifier: 0 };
     }
   }
   return pricing;
@@ -2099,12 +2105,17 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 <div key={traitType}>
                   <div className="mb-3 text-sm font-semibold text-white">{traitType}</div>
                   <div className="space-y-2">
-                    {values.map((val) => {
+                    {values.map(({ value: val, examples }) => {
                       const pricing = collection.traitPricing?.[traitType]?.[val] ??
                         { rarity: "common" as TraitRarity, priceModifier: 0 };
                       return (
                         <div key={val} className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 px-3 py-2">
                           <span className="min-w-[120px] truncate text-sm text-white">{val}</span>
+                          {examples.length > 0 && (
+                            <span className="text-xs text-white/45" title="Example NFT numbers with this trait">
+                              e.g. {examples.map((id) => `#${id}`).join(", ")}
+                            </span>
+                          )}
                           <div className="flex gap-1">
                             {RARITY_TIERS.map((tier) => (
                               <button key={tier} type="button"
