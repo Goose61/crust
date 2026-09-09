@@ -7,7 +7,7 @@ import {
 } from "@solana/wallet-adapter-react";
 import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { SolflareWalletAdapter } from "@solana/wallet-adapter-solflare";
-import { WalletError } from "@solana/wallet-adapter-base";
+import { WalletError, WalletReadyState } from "@solana/wallet-adapter-base";
 import { createSolanaClient } from "@metamask/connect-solana";
 import { BackpackWalletAdapter } from "@/lib/backpack-wallet-adapter";
 import { getRpcUrl, SOLANA_RPC_DEVNET, SOLANA_RPC_MAINNET } from "@/lib/solana-config";
@@ -47,7 +47,9 @@ export function SolanaAdapterProvider({ children }: { children: ReactNode }) {
     <ConnectionProvider endpoint={endpoint}>
       <AdapterWalletProvider
         wallets={wallets}
-        autoConnect
+        autoConnect={async (adapter) =>
+          adapter.readyState === WalletReadyState.Installed
+        }
         onError={(error: WalletError) => {
           if (error.name === "WalletNotReadyError" || error.name === "WalletNotConnectedError") {
             return;

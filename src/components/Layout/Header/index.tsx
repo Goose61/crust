@@ -64,6 +64,15 @@ const Header: React.FC = () => {
             >
               {short}
             </Button>
+          ) : connecting ? (
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() => disconnect()}
+              className="h-10 rounded-full border-white/20 bg-transparent text-white hover:border-primary hover:text-primary"
+            >
+              Cancel
+            </Button>
           ) : (
             <Button
               size="lg"
@@ -71,7 +80,7 @@ const Header: React.FC = () => {
               onClick={() => void connect()}
               className="h-10 rounded-full border-white/20 bg-transparent text-white hover:border-primary hover:text-primary"
             >
-              {connecting ? "Connecting…" : "Connect"}
+              Connect
             </Button>
           )}
         </div>
@@ -119,12 +128,12 @@ const Header: React.FC = () => {
                   variant="outline"
                   onClick={() => {
                     setNavbarOpen(false);
-                    if (short) disconnect();
+                    if (short || connecting) disconnect();
                     else void connect();
                   }}
                   className="w-full rounded-full border-white/20 text-white"
                 >
-                  {short ?? (connecting ? "Connecting…" : "Connect")}
+                  {short ?? (connecting ? "Cancel connect" : "Connect")}
                 </Button>
               </div>
             </nav>
