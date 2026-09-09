@@ -173,6 +173,8 @@ export type PendingMint = {
   coreCollectionAddress?: string;
   /** Token id within a gift bundle collection (if applicable). */
   tokenId?: number;
+  /** Exact unsigned tx shown to the wallet at prepare-sign (avoids rebuild drift at cosign). */
+  preparedTxBase64?: string;
 };
 
 export type CollectionSocials = {

@@ -8,7 +8,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCollection } from "@/lib/store";
-import { cosignAndSubmitGiftTransaction } from "@/lib/mint-nft";
+import { cosignAndSubmitGiftTransaction, isValidSolanaAddress } from "@/lib/mint-nft";
+import { resolvePendingMint } from "@/lib/gift-pending";
 import { parseNetwork } from "@/lib/solana-config";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       collectionId?: string;
       signedTxBase64?: string;
+      payer?: string;
       network?: string;
     };
 
@@ -51,9 +53,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const payer =
+      String(body.payer || collection.pendingMint.payer || "").trim();
+    if (!payer || !isValidSolanaAddress(payer)) {
+      return NextResponse.json({ error: "Valid payer wallet required" }, { status: 400 });
+    }
+
+    const pendingMint = resolvePendingMint(collection, payer);
+
     const txSignature = await cosignAndSubmitGiftTransaction({
       userSignedTxBase64: signedTxBase64,
-      pendingMint: collection.pendingMint,
+      pendingMint,
       network,
     });
 

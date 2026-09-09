@@ -131,7 +131,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch("/api/gift/cosign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ collectionId, signedTxBase64: signedB64, network }),
+        body: JSON.stringify({ collectionId, signedTxBase64: signedB64, payer: publicKey, network }),
       });
       const data = await readJsonResponse<{ txSignature?: string; error?: string }>(res);
       if (!res.ok) throw new Error(data.error ?? "Co-sign failed");

@@ -332,22 +332,38 @@ export async function cosignAndSubmitGiftTransaction(params: {
     throw new Error("Pending mint asset key does not match stored address.");
   }
 
-  const expected = await buildUnsignedGiftTx({
-    name: params.pendingMint.name,
-    metadataUri: params.pendingMint.metadataUri,
-    recipient: params.pendingMint.recipient,
-    payer: params.pendingMint.payer,
-    network,
-    assetSecretKey: assetSecret,
-    coreCollectionAddress: params.pendingMint.coreCollectionAddress,
-    recentBlockhash: tx.message.recentBlockhash,
-  });
-
-  const expectedTx = VersionedTransaction.deserialize(Buffer.from(expected.txBase64, "base64"));
   const userMessage = Buffer.from(tx.message.serialize());
-  const expectedMessage = Buffer.from(expectedTx.message.serialize());
-  if (!userMessage.equals(expectedMessage)) {
-    throw new Error("Signed transaction does not match the pending mint.");
+  const preparedTxBase64 = params.pendingMint.preparedTxBase64?.trim();
+
+  if (preparedTxBase64) {
+    const preparedTx = VersionedTransaction.deserialize(
+      Buffer.from(preparedTxBase64, "base64"),
+    );
+    const preparedMessage = Buffer.from(preparedTx.message.serialize());
+    if (!userMessage.equals(preparedMessage)) {
+      throw new Error(
+        "Signed transaction does not match the pending mint. Refresh the mint transaction and sign again.",
+      );
+    }
+  } else {
+    const expected = await buildUnsignedGiftTx({
+      name: params.pendingMint.name,
+      metadataUri: params.pendingMint.metadataUri,
+      recipient: params.pendingMint.recipient,
+      payer: params.pendingMint.payer,
+      network,
+      assetSecretKey: assetSecret,
+      coreCollectionAddress: params.pendingMint.coreCollectionAddress,
+      recentBlockhash: tx.message.recentBlockhash,
+    });
+
+    const expectedTx = VersionedTransaction.deserialize(Buffer.from(expected.txBase64, "base64"));
+    const expectedMessage = Buffer.from(expectedTx.message.serialize());
+    if (!userMessage.equals(expectedMessage)) {
+      throw new Error(
+        "Signed transaction does not match the pending mint. Refresh the mint transaction and sign again.",
+      );
+    }
   }
 
   const cosigners = [assetKp];

@@ -10,44 +10,14 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getCollection } from "@/lib/store";
+import { getCollection, updateCollection } from "@/lib/store";
 import { isValidSolanaAddress, prepareGiftTransactionForSigning } from "@/lib/mint-nft";
+import { resolvePendingMint } from "@/lib/gift-pending";
 import { parseNetwork } from "@/lib/solana-config";
 import { rateLimit } from "@/lib/rate-limit";
-import type { Collection, PendingMint } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-function resolvePendingMint(collection: Collection, payer: string): PendingMint {
-  const pm = collection.pendingMint;
-  if (!pm) {
-    throw new Error("No pending mint for this collection — rebuild the mint transaction.");
-  }
-
-  const tokenId = pm.tokenId ?? collection.tokens[0]?.tokenId;
-  const token =
-    tokenId != null
-      ? collection.tokens.find((t) => t.tokenId === tokenId)
-      : collection.tokens[0];
-
-  if (pm.name && pm.metadataUri && pm.recipient && pm.payer) {
-    return { ...pm, tokenId: token?.tokenId ?? pm.tokenId };
-  }
-
-  if (!token?.metadataUri || !token.owner) {
-    throw new Error("Collection is missing token metadata for mint refresh.");
-  }
-
-  return {
-    ...pm,
-    tokenId: token.tokenId,
-    name: pm.name ?? `${collection.name} #${token.tokenId}`,
-    metadataUri: pm.metadataUri ?? token.metadataUri,
-    recipient: pm.recipient ?? token.owner,
-    payer: pm.payer ?? payer,
-  };
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -84,6 +54,15 @@ export async function POST(req: NextRequest) {
       pendingMint,
       payer,
       network,
+    });
+
+    await updateCollection(collectionId, (c) => {
+      if (!c.pendingMint) return c;
+      c.pendingMint = {
+        ...pendingMint,
+        preparedTxBase64: prepared.txBase64,
+      };
+      return c;
     });
 
     return NextResponse.json({
