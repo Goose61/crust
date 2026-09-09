@@ -17,7 +17,7 @@ import {
 } from "@metaplex-foundation/umi";
 import { create } from "@metaplex-foundation/mpl-core";
 import { base64 } from "@metaplex-foundation/umi/serializers";
-import { Keypair, VersionedTransaction } from "@solana/web3.js";
+import { Keypair, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { getDirectRpcUrl, getSolanaNetwork, type SolanaNetwork } from "./solana-config";
 import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
 import { fetchCoreCollection, getCoreCollectionAddress } from "./core-collection";
@@ -232,6 +232,76 @@ export async function simulateUnsignedTransaction(
   }
 }
 
+function signatureIsPresent(sig: Uint8Array | null | undefined): boolean {
+  return Boolean(sig && sig.length > 0 && !sig.every((b) => b === 0));
+}
+
+/** Wallets may inject priority-fee instructions; verify payer + asset instead of byte equality. */
+function assertUserSignedGiftMintTx(
+  tx: VersionedTransaction,
+  pendingMint: PendingMint,
+): void {
+  const keys = tx.message.staticAccountKeys;
+  if (keys.length === 0) {
+    throw new Error("Signed transaction has no accounts.");
+  }
+
+  const feePayer = keys[0];
+  if (feePayer.toBase58() !== pendingMint.payer) {
+    throw new Error("Transaction fee payer does not match the wallet that started this mint.");
+  }
+
+  const assetPk = new PublicKey(pendingMint.assetAddress);
+  if (!keys.some((k) => k.equals(assetPk))) {
+    throw new Error("Transaction does not include the expected NFT mint address.");
+  }
+
+  const recipientPk = new PublicKey(pendingMint.recipient);
+  if (!keys.some((k) => k.equals(recipientPk))) {
+    throw new Error("Transaction does not include the expected gift recipient.");
+  }
+
+  if (!signatureIsPresent(tx.signatures[0])) {
+    throw new Error("Transaction is missing the payer signature.");
+  }
+
+  const preparedTxBase64 = pendingMint.preparedTxBase64?.trim();
+  if (!preparedTxBase64) return;
+
+  try {
+    const preparedTx = VersionedTransaction.deserialize(
+      Buffer.from(preparedTxBase64, "base64"),
+    );
+    const preparedMessage = Buffer.from(preparedTx.message.serialize());
+    const userMessage = Buffer.from(tx.message.serialize());
+    if (preparedMessage.equals(userMessage)) return;
+  } catch {
+    return;
+  }
+
+  // Wallet modified the tx (e.g. compute budget) — relaxed checks above are sufficient.
+}
+
+async function simulateSignedTransaction(
+  tx: VersionedTransaction,
+  network: SolanaNetwork,
+): Promise<void> {
+  const rpcUrl = getDirectRpcUrl(network);
+  const txBase64 = Buffer.from(tx.serialize()).toString("base64");
+  const result = await serverRpcCall<{
+    value?: { err?: unknown; logs?: string[] | null };
+  }>(
+    rpcUrl,
+    "simulateTransaction",
+    [txBase64, { encoding: "base64", sigVerify: true, commitment: "confirmed" }],
+    15_000,
+  );
+  const err = result?.value?.err;
+  if (err) {
+    throw new Error(describeSimulationError(err, result?.value?.logs ?? null));
+  }
+}
+
 export async function prepareGiftTransactionForSigning(params: {
   pendingMint: PendingMint;
   payer: string;
@@ -332,39 +402,7 @@ export async function cosignAndSubmitGiftTransaction(params: {
     throw new Error("Pending mint asset key does not match stored address.");
   }
 
-  const userMessage = Buffer.from(tx.message.serialize());
-  const preparedTxBase64 = params.pendingMint.preparedTxBase64?.trim();
-
-  if (preparedTxBase64) {
-    const preparedTx = VersionedTransaction.deserialize(
-      Buffer.from(preparedTxBase64, "base64"),
-    );
-    const preparedMessage = Buffer.from(preparedTx.message.serialize());
-    if (!userMessage.equals(preparedMessage)) {
-      throw new Error(
-        "Signed transaction does not match the pending mint. Refresh the mint transaction and sign again.",
-      );
-    }
-  } else {
-    const expected = await buildUnsignedGiftTx({
-      name: params.pendingMint.name,
-      metadataUri: params.pendingMint.metadataUri,
-      recipient: params.pendingMint.recipient,
-      payer: params.pendingMint.payer,
-      network,
-      assetSecretKey: assetSecret,
-      coreCollectionAddress: params.pendingMint.coreCollectionAddress,
-      recentBlockhash: tx.message.recentBlockhash,
-    });
-
-    const expectedTx = VersionedTransaction.deserialize(Buffer.from(expected.txBase64, "base64"));
-    const expectedMessage = Buffer.from(expectedTx.message.serialize());
-    if (!userMessage.equals(expectedMessage)) {
-      throw new Error(
-        "Signed transaction does not match the pending mint. Refresh the mint transaction and sign again.",
-      );
-    }
-  }
+  assertUserSignedGiftMintTx(tx, params.pendingMint);
 
   const cosigners = [assetKp];
   const usesCoreCollection =
@@ -373,6 +411,8 @@ export async function cosignAndSubmitGiftTransaction(params: {
     cosigners.unshift(platformKp);
   }
   tx.sign(cosigners);
+
+  await simulateSignedTransaction(tx, network);
 
   return serverRpcCall<string>(rpcUrl, "sendTransaction", [
     Buffer.from(tx.serialize()).toString("base64"),

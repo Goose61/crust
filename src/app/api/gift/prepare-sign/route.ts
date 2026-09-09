@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
     await updateCollection(collectionId, (c) => {
       if (!c.pendingMint) return c;
       c.pendingMint = {
+        ...c.pendingMint,
         ...pendingMint,
         preparedTxBase64: prepared.txBase64,
       };

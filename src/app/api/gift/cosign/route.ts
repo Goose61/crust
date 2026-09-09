@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       collectionId?: string;
       signedTxBase64?: string;
+      preparedTxBase64?: string;
       payer?: string;
       network?: string;
     };
@@ -59,7 +60,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid payer wallet required" }, { status: 400 });
     }
 
-    const pendingMint = resolvePendingMint(collection, payer);
+    const preparedTxBase64 = String(body.preparedTxBase64 || "").trim();
+    const pendingMint = {
+      ...resolvePendingMint(collection, payer),
+      ...(preparedTxBase64
+        ? { preparedTxBase64 }
+        : collection.pendingMint?.preparedTxBase64
+          ? { preparedTxBase64: collection.pendingMint.preparedTxBase64 }
+          : {}),
+    };
 
     const txSignature = await cosignAndSubmitGiftTransaction({
       userSignedTxBase64: signedTxBase64,
