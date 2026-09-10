@@ -47,6 +47,8 @@ import {
 } from "@/lib/client-launch-api";
 import {
   uploadCollectionWithPhantom,
+  uploadCollectionViaServer,
+  payPlatformForArweaveStorage,
 } from "@/lib/irys-client";
 import { getClientNetwork } from "@/lib/solana-config";
 import {
@@ -1153,9 +1155,30 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
       const totalBytes = await estimateArweaveBytes(current.id, tokenList.length);
       const estimate = await fetchStorageEstimate(publicKey, current.id, totalBytes);
-      setGoLivePhase(
-        `Funding Arweave storage (~${estimate.sol.toFixed(4)} SOL) — approve in your wallet…`,
-      );
+      const authHeaders = await buildAuthHeaders(publicKey);
+      const network = await getClientNetwork();
+
+      let paymentSignature: string | undefined;
+      const useServerBulk =
+        estimate.serverBulkUpload &&
+        estimate.platformWallet &&
+        tokenList.length > 1;
+
+      if (useServerBulk) {
+        setGoLivePhase(
+          `Approve one-time storage payment (~${estimate.sol.toFixed(4)} SOL) in your wallet…`,
+        );
+        paymentSignature = await payPlatformForArweaveStorage(
+          estimate.sol,
+          estimate.platformWallet!,
+          network,
+        );
+        setGoLivePhase("Uploading to Arweave — keep this tab open…");
+      } else {
+        setGoLivePhase(
+          `Funding Arweave storage (~${estimate.sol.toFixed(4)} SOL) — approve in your wallet…`,
+        );
+      }
 
       const existingProgress = await loadUploadProgress(current.id);
       const uploadTokens = [];
@@ -1188,34 +1211,59 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         logoBytes = new Uint8Array(logoAsset.data);
       }
 
-      const network = await getClientNetwork();
-      setGoLivePhase("Uploading to Arweave — keep this tab open…");
+      if (!useServerBulk) {
+        setGoLivePhase("Uploading to Arweave — keep this tab open…");
+      }
 
-      const uploaded = await uploadCollectionWithPhantom({
-        collectionId: current.id,
-        tokens: uploadTokens,
-        logoBytes,
-        logoContentType: logoAsset?.contentType,
-        network,
-        existingProgress: existingProgress?.completed,
-        existingLogoUri: existingProgress?.logoUri,
-        onFundNeeded: () => {
-          setGoLivePhase("Approve storage payment in your wallet…");
-        },
-        onProgress: (p) => {
-          if (p.phase === "funding") {
-            setGoLivePhase("Approve storage payment in your wallet…");
-          } else if (p.phase === "uploading-logo") {
-            setArweaveUploadDetail("Uploading logo…");
-          } else {
-            setArweaveUploadDetail(
-              p.tokenId != null
-                ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
-                : `${p.done} / ${p.total} uploads`,
-            );
-          }
-        },
-      });
+      const uploaded = useServerBulk
+        ? await uploadCollectionViaServer({
+            collectionId: current.id,
+            wallet: publicKey,
+            tokens: uploadTokens,
+            logoBytes,
+            logoContentType: logoAsset?.contentType,
+            paymentSignature: paymentSignature!,
+            minSol: estimate.sol,
+            authHeaders,
+            existingProgress: existingProgress?.completed,
+            existingLogoUri: existingProgress?.logoUri,
+            onProgress: (p) => {
+              if (p.phase === "uploading-logo") {
+                setArweaveUploadDetail("Uploading logo…");
+              } else {
+                setArweaveUploadDetail(
+                  p.tokenId != null
+                    ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
+                    : `${p.done} / ${p.total} uploads`,
+                );
+              }
+            },
+          })
+        : await uploadCollectionWithPhantom({
+            collectionId: current.id,
+            tokens: uploadTokens,
+            logoBytes,
+            logoContentType: logoAsset?.contentType,
+            network,
+            existingProgress: existingProgress?.completed,
+            existingLogoUri: existingProgress?.logoUri,
+            onFundNeeded: () => {
+              setGoLivePhase("Approve storage payment in your wallet…");
+            },
+            onProgress: (p) => {
+              if (p.phase === "funding") {
+                setGoLivePhase("Approve storage payment in your wallet…");
+              } else if (p.phase === "uploading-logo") {
+                setArweaveUploadDetail("Uploading logo…");
+              } else {
+                setArweaveUploadDetail(
+                  p.tokenId != null
+                    ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
+                    : `${p.done} / ${p.total} uploads`,
+                );
+              }
+            },
+          });
 
       await saveUploadProgress(current.id, {
         completed: uploaded.tokens,

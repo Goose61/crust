@@ -488,6 +488,161 @@ export async function uploadCollectionWithPhantom(params: {
   return { tokens: completed, logoUri };
 }
 
+export async function payPlatformForArweaveStorage(
+  solAmount: number,
+  platformWallet: string,
+  network: SolanaNetwork,
+): Promise<string> {
+  const phantom = getPhantomProvider();
+  if (!phantom?.publicKey) throw new Error("Connect a wallet first.");
+
+  const { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } =
+    await import("@solana/web3.js");
+  const rpcUrl = getRpcUrl(network);
+  const connection = new Connection(rpcUrl, "confirmed");
+  const payer = new PublicKey(phantom.publicKey.toBase58());
+  const lamports = Math.ceil(solAmount * LAMPORTS_PER_SOL * 1.02);
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+
+  const tx = new Transaction({ feePayer: payer, blockhash, lastValidBlockHeight });
+  tx.add(
+    SystemProgram.transfer({
+      fromPubkey: payer,
+      toPubkey: new PublicKey(platformWallet),
+      lamports,
+    }),
+  );
+
+  let sig: string;
+  if (phantom.signTransaction) {
+    const signed = (await phantom.signTransaction(tx)) as InstanceType<typeof Transaction>;
+    sig = await connection.sendRawTransaction(signed.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: "confirmed",
+    });
+  } else {
+    const result = await phantom.signAndSendTransaction(tx, { skipPreflight: false });
+    sig = sigToBase58(result.signature);
+  }
+
+  await waitForTxConfirmed(sig, rpcUrl, network);
+  return sig;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+export const ARWEAVE_SERVER_BATCH_SIZE = 8;
+
+/** Bulk upload via server Irys wallet — one storage payment, no per-file wallet signatures. */
+export async function uploadCollectionViaServer(params: {
+  collectionId: string;
+  wallet: string;
+  tokens: CollectionUploadToken[];
+  logoBytes?: Uint8Array;
+  logoContentType?: string;
+  paymentSignature: string;
+  minSol: number;
+  authHeaders: Record<string, string>;
+  existingProgress?: Record<number, { imageUri: string; metadataUri: string }>;
+  existingLogoUri?: string;
+  onProgress?: (p: CollectionUploadProgress) => void;
+}): Promise<{
+  tokens: Record<number, { imageUri: string; metadataUri: string }>;
+  logoUri?: string;
+}> {
+  const completed: Record<number, { imageUri: string; metadataUri: string }> = {
+    ...(params.existingProgress ?? {}),
+  };
+  let logoUri = params.existingLogoUri;
+  const pending = params.tokens.filter((t) => !completed[t.tokenId]);
+  const totalSteps =
+    pending.length * 2 + (params.logoBytes && !logoUri ? 1 : 0);
+  let done = Object.keys(completed).length * 2 + (logoUri ? 1 : 0);
+  let sentPayment = false;
+
+  for (let i = 0; i < pending.length; i += ARWEAVE_SERVER_BATCH_SIZE) {
+    const slice = pending.slice(i, i + ARWEAVE_SERVER_BATCH_SIZE);
+    for (const token of slice) {
+      params.onProgress?.({
+        done,
+        total: totalSteps,
+        phase: "uploading-image",
+        tokenId: token.tokenId,
+      });
+    }
+
+    const res = await fetch(`/api/collections/${params.collectionId}/arweave-upload`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...params.authHeaders,
+      },
+      body: JSON.stringify({
+        minSol: params.minSol,
+        paymentSignature: sentPayment ? undefined : params.paymentSignature,
+        items: slice.map((token) => ({
+          tokenId: token.tokenId,
+          imageBase64: bytesToBase64(token.imageBytes),
+          contentType: token.contentType,
+          metadataJson: token.buildMetadata(""),
+        })),
+      }),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      tokens?: Record<number, { imageUri: string; metadataUri: string }>;
+    };
+    if (!res.ok) throw new Error(data.error || "Server Arweave upload failed");
+    sentPayment = true;
+
+    for (const token of slice) {
+      const row = data.tokens?.[token.tokenId];
+      if (!row) throw new Error(`Missing upload result for token #${token.tokenId}`);
+      completed[token.tokenId] = row;
+      done += 2;
+      params.onProgress?.({
+        done,
+        total: totalSteps,
+        phase: "uploading-metadata",
+        tokenId: token.tokenId,
+      });
+    }
+  }
+
+  if (params.logoBytes && !logoUri) {
+    params.onProgress?.({ done, total: totalSteps, phase: "uploading-logo" });
+    const res = await fetch(`/api/collections/${params.collectionId}/arweave-upload`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...params.authHeaders,
+      },
+      body: JSON.stringify({
+        minSol: params.minSol,
+        logo: {
+          dataBase64: bytesToBase64(params.logoBytes),
+          contentType: params.logoContentType ?? "image/png",
+        },
+      }),
+    });
+    const data = (await res.json()) as { ok?: boolean; error?: string; logoUri?: string };
+    if (!res.ok) throw new Error(data.error || "Logo upload failed");
+    logoUri = data.logoUri;
+    done += 1;
+  }
+
+  params.onProgress?.({ done: totalSteps, total: totalSteps, phase: "uploading-metadata" });
+  return { tokens: completed, logoUri };
+}
+
 export function networkLabel(network: SolanaNetwork): string {
   return network === "mainnet" ? "Mainnet" : "Devnet";
 }

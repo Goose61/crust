@@ -170,7 +170,12 @@ export async function fetchStorageEstimate(
   collectionId: string,
   totalBytes: number,
   authHeaders?: Record<string, string>,
-): Promise<{ lamports: string; sol: number }> {
+): Promise<{
+  lamports: string;
+  sol: number;
+  serverBulkUpload?: boolean;
+  platformWallet?: string | null;
+}> {
   const headers = authHeaders ?? (await buildAuthHeaders(wallet));
   const res = await fetch(
     `/api/collections/${collectionId}/storage-estimate?totalBytes=${totalBytes}`,
@@ -179,8 +184,15 @@ export async function fetchStorageEstimate(
   const data = await readJsonResponse<{
     lamports: string;
     sol: number;
+    serverBulkUpload?: boolean;
+    platformWallet?: string | null;
     error?: string;
   }>(res);
   if (!res.ok) throw new Error(data.error || "Could not estimate storage");
-  return { lamports: data.lamports, sol: data.sol };
+  return {
+    lamports: data.lamports,
+    sol: data.sol,
+    serverBulkUpload: data.serverBulkUpload,
+    platformWallet: data.platformWallet,
+  };
 }
