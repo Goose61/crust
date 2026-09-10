@@ -13,8 +13,8 @@ const nextConfig: NextConfig = {
     // Re-enable ESLint during builds so CI catches real issues
     ignoreDuringBuilds: false,
   },
-  // Do not externalize sharp — Turbopack + Vercel linux-x64 fails to resolve it at runtime.
-  serverExternalPackages: ["@irys/upload", "@irys/upload-solana", "yauzl"],
+  // Do not externalize sharp or @irys/bundles — Turbopack/Vercel must bundle them.
+  serverExternalPackages: ["yauzl"],
   transpilePackages: [
     "@solana/wallet-adapter-base",
     "@solana/wallet-adapter-react",
