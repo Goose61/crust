@@ -314,6 +314,58 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     [collection],
   );
 
+  function buildWizardPersistPatch(nextStep: number, src: Collection): Partial<Collection> {
+    if (!mode) return {};
+    return {
+      name: src.name,
+      description: src.description,
+      nameTemplate: src.nameTemplate,
+      symbol: src.symbol,
+      supply: src.supply,
+      socials: src.socials,
+      logoUrl: src.logoUrl,
+      payments: { ...src.payments, creatorWallet: src.payments.creatorWallet || publicKey! },
+      fees: src.fees,
+      blindMint: src.blindMint,
+      revealTrigger: src.revealTrigger,
+      revealAt: src.revealAt,
+      revealAtPercent: src.revealAtPercent,
+      milestones: src.milestones,
+      traitPricing: src.traitPricing,
+      layers: src.layers,
+      stackOrder: src.stackOrder,
+      royaltyBps,
+      royaltySplit: {
+        ownerPercent: royaltyOwner ? royaltySplit.ownerPercent : 0,
+        holdersPercent: royaltyHolders ? royaltySplit.holdersPercent : 0,
+        buybackPercent: royaltyBuyback ? royaltySplit.buybackPercent : 0,
+      },
+      royaltyCreators: src.royaltyCreators,
+      metadataConfirmed: src.metadataConfirmed,
+      buybackTokenCa: src.buybackTokenCa,
+      launchDraft: {
+        step: nextStep,
+        mode,
+        wizardVersion: WIZARD_VERSION,
+        royaltyBps,
+        royaltySplit,
+        royaltyOwner,
+        royaltyHolders,
+        royaltyBuyback,
+      },
+    };
+  }
+
+  async function restoreLogoPreview(collectionId: string) {
+    const logo = await getLogo(collectionId);
+    if (logo) {
+      setLogoPreview(URL.createObjectURL(new Blob([logo.data], { type: logo.contentType })));
+    } else {
+      setLogoPreview(null);
+    }
+    setLogoFile(null);
+  }
+
   function applyLaunchDraft(col: Collection) {
     const draft = col.launchDraft;
     if (draft) {
@@ -334,7 +386,9 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       traitPricing: col.traitPricing ?? defaultTraitPricing(col.tokens),
     };
     setCollection(withPricing);
+    setAllowlistText(col.allowlist?.join("\n") ?? "");
     void checkLocalAssets(withPricing);
+    void restoreLogoPreview(col.id);
   }
 
   async function checkLocalAssets(col: Collection) {
@@ -806,20 +860,25 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     const server = data.collection;
     setCollection((prev) => {
       if (!prev || prev.id !== server.id) {
-        return { ...server, ...patch, tokens: patch.tokens ?? server.tokens };
+        return {
+          ...server,
+          ...patch,
+          tokens: patch.tokens ?? server.tokens,
+        };
       }
-      const merged: Collection = {
+      return {
         ...server,
+        ...prev,
         ...patch,
-        tokens: patch.tokens ?? server.tokens,
+        tokens: patch.tokens ?? prev.tokens,
+        payments: { ...server.payments, ...prev.payments, ...(patch.payments ?? {}) },
+        fees: { ...server.fees, ...prev.fees, ...(patch.fees ?? {}) },
+        socials: { ...server.socials, ...prev.socials, ...(patch.socials ?? {}) },
+        milestones: patch.milestones ?? prev.milestones,
+        layers: patch.layers ?? prev.layers,
+        traitPricing: patch.traitPricing ?? prev.traitPricing,
+        launchDraft: patch.launchDraft ?? prev.launchDraft,
       };
-      // Keep edits made while a slow save (e.g. batched NFT metadata) was in flight.
-      if (prev.description !== src.description) merged.description = prev.description;
-      if (prev.name !== src.name) merged.name = prev.name;
-      if (prev.nameTemplate !== src.nameTemplate) merged.nameTemplate = prev.nameTemplate;
-      if (prev.symbol !== src.symbol) merged.symbol = prev.symbol;
-      if (prev.tokens !== src.tokens) merged.tokens = prev.tokens;
-      return merged;
     });
     return { ...server, ...patch, tokens: patch.tokens ?? server.tokens } as Collection;
   }
@@ -885,35 +944,34 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   async function persistDraft(nextStep = step, src = collection) {
     if (!src || !publicKey || !mode) return;
     try {
-      await save({
-        payments: { ...src.payments, creatorWallet: src.payments.creatorWallet || publicKey },
-        royaltyBps,
-        royaltySplit: {
-          ownerPercent: royaltyOwner ? royaltySplit.ownerPercent : 0,
-          holdersPercent: royaltyHolders ? royaltySplit.holdersPercent : 0,
-          buybackPercent: royaltyBuyback ? royaltySplit.buybackPercent : 0,
-        },
-        royaltyCreators: src.royaltyCreators,
-        symbol: src.symbol,
-        description: src.description,
-        nameTemplate: src.nameTemplate,
-        metadataConfirmed: src.metadataConfirmed,
-        buybackTokenCa: src.buybackTokenCa,
-        launchDraft: {
-          step: nextStep,
-          mode,
-          wizardVersion: WIZARD_VERSION,
-          royaltyBps,
-          royaltySplit,
-          royaltyOwner,
-          royaltyHolders,
-          royaltyBuyback,
-        },
-      }, undefined, src);
+      await save(buildWizardPersistPatch(nextStep, src), undefined, src);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save progress");
       throw e;
     }
+  }
+
+  async function navigateToStep(targetStep: number, options?: { applyMetadata?: boolean }) {
+    if (targetStep === step) return;
+    if (targetStep < 0 || targetStep >= STEPS.length) return;
+
+    if (publicKey && collection && mode) {
+      setBusy(true);
+      try {
+        let src = collection;
+        if (options?.applyMetadata && STEPS[step] === "Metadata") {
+          src = withAppliedMetadata(collection);
+          setCollection(src);
+        }
+        await persistDraft(targetStep, src);
+        setStep(targetStep);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    setStep(targetStep);
   }
 
   async function storeLogoLocally(collectionId: string) {
@@ -1480,7 +1538,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               i < step   ? "bg-primary/20 text-white" :
                            "bg-white/10 text-white/50"
             }`}
-            onClick={() => { if (i < step) setStep(i); }}
+            onClick={() => { if (i < step) void navigateToStep(i); }}
           >
             {i + 1}. {label}
           </li>
@@ -2520,29 +2578,14 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
         {/* Navigation */}
         <div className="mt-8 flex justify-between">
-          <button disabled={step === 0} onClick={() => setStep((s) => Math.max(0, s - 1))}
+          <button disabled={step === 0 || busy} onClick={() => void navigateToStep(step - 1)}
             className="text-sm text-white/40 disabled:opacity-0">
             ← Back
           </button>
           {step < STEPS.length - 1 && (
             <button
               disabled={!collection || busy}
-              onClick={async () => {
-                if (publicKey && collection) {
-                  setBusy(true);
-                  try {
-                    const leavingMetadata = STEPS[step] === "Metadata";
-                    const src = leavingMetadata ? withAppliedMetadata(collection) : collection;
-                    if (leavingMetadata) setCollection(src);
-                    await persistDraft(step + 1, src);
-                    setStep((s) => s + 1);
-                  } finally {
-                    setBusy(false);
-                  }
-                } else {
-                  setStep((s) => s + 1);
-                }
-              }}
+              onClick={() => void navigateToStep(step + 1, { applyMetadata: STEPS[step] === "Metadata" })}
               className="rounded-lg bg-white/10 px-5 py-2 text-sm text-white disabled:opacity-40 hover:bg-white/15"
             >
               Next →
