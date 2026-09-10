@@ -72,6 +72,14 @@ import {
   rememberLaunchDraft,
   readRememberedLaunchDraft,
 } from "@/lib/launch-resume";
+import {
+  formatSolAmount,
+  SOL_USD_FALLBACK,
+  usdFromDisplayInput,
+  displayPriceFromUsd,
+  usdToSol,
+  type PriceDisplayUnit,
+} from "@/lib/price-display";
 import { useWallet } from "./WalletProvider";
 
 /* ─── steps ─── */
@@ -190,6 +198,42 @@ function Info({ tip }: { tip: string }) {
   );
 }
 
+function PriceUnitToggle({
+  unit,
+  onChange,
+  solUsd,
+}: {
+  unit: PriceDisplayUnit;
+  onChange: (unit: PriceDisplayUnit) => void;
+  solUsd: number;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="inline-flex rounded-lg border border-white/15 p-0.5 text-xs">
+        <button
+          type="button"
+          onClick={() => onChange("usd")}
+          className={`rounded-md px-2.5 py-1 transition ${
+            unit === "usd" ? "bg-primary text-white" : "text-white/50 hover:text-white"
+          }`}
+        >
+          USD
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange("sol")}
+          className={`rounded-md px-2.5 py-1 transition ${
+            unit === "sol" ? "bg-primary text-white" : "text-white/50 hover:text-white"
+          }`}
+        >
+          SOL
+        </button>
+      </div>
+      <span className="text-[11px] text-white/40">1 SOL ≈ ${solUsd.toFixed(2)}</span>
+    </div>
+  );
+}
+
 export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const router = useRouter();
   const { publicKey, connect } = useWallet();
@@ -229,6 +273,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [tokenPage, setTokenPage] = useState(0);
   const [tokenFilter, setTokenFilter] = useState("");
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
+  const [priceUnit, setPriceUnit] = useState<PriceDisplayUnit>("usd");
+  const [solUsd, setSolUsd] = useState(SOL_USD_FALLBACK);
 
   const uploadInProgressRef = useRef(false);
   const rezipInputRef = useRef<HTMLInputElement>(null);
@@ -434,6 +480,22 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       }
     };
   }, [collection?.id, collection?.clientImport, collection?.tokens.length]);
+
+  useEffect(() => {
+    if (!collection || !mode) return;
+    const stepName = wizardSteps(mode)[step];
+    if (stepName !== "Payments" && stepName !== "Traits") return;
+    let cancelled = false;
+    void fetch("/api/quotes?usd=1")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { quote?: { solUsd?: number } } | null) => {
+        if (!cancelled && data?.quote?.solUsd) setSolUsd(data.quote.solUsd);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [collection?.id, mode, step]);
 
   async function bindLaunchSession(
     col: Collection,
@@ -2142,10 +2204,14 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         {stepIs("Traits") && collection && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-lg font-semibold text-white">Trait rarity &amp; pricing</h2>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <h2 className="text-lg font-semibold text-white">Trait rarity &amp; pricing</h2>
+                <PriceUnitToggle unit={priceUnit} onChange={setPriceUnit} solUsd={solUsd} />
+              </div>
               <p className="mt-1 text-sm text-white/60">
                 Assign each trait value a rarity tier and an optional price modifier. Each NFT&apos;s
                 mint price is base price + sum of its traits&apos; price modifiers.
+                {priceUnit === "sol" && " Prices are stored in USD and converted using the live SOL rate."}
               </p>
               <div className="mt-3 flex flex-wrap gap-3 text-xs">
                 <span className="rounded-full bg-white/10 px-2 py-0.5 text-white/60">Common</span>
@@ -2186,10 +2252,26 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                             ))}
                           </div>
                           <label className="ml-auto flex items-center gap-1.5 text-xs text-white/60">
-                            <span>+$</span>
-                            <input type="number" min={0} step={0.01} value={pricing.priceModifier}
-                              onChange={(e) => setTraitPriceModifier(traitType, val, Number(e.target.value))}
-                              className="input w-20 py-1 text-xs" />
+                            <span>{priceUnit === "usd" ? "+$" : "+SOL"}</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={priceUnit === "usd" ? 0.01 : 0.001}
+                              value={displayPriceFromUsd(pricing.priceModifier, priceUnit, solUsd)}
+                              onChange={(e) =>
+                                setTraitPriceModifier(
+                                  traitType,
+                                  val,
+                                  usdFromDisplayInput(Number(e.target.value), priceUnit, solUsd),
+                                )
+                              }
+                              className="input w-24 py-1 text-xs"
+                            />
+                            {priceUnit === "usd" ? (
+                              <span className="text-white/35">≈ {formatSolAmount(usdToSol(pricing.priceModifier, solUsd))} SOL</span>
+                            ) : (
+                              <span className="text-white/35">≈ ${pricing.priceModifier.toFixed(2)}</span>
+                            )}
                           </label>
                         </div>
                       );
@@ -2204,12 +2286,32 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         {/* ── Payments ── */}
         {stepIs("Payments") && collection && (
           <div className="space-y-4 text-sm">
-            <h2 className="text-lg font-semibold text-white">Payment settings</h2>
-            <Field label="Base mint price (USD)">
-              <input type="number" min={0} step={0.01} className="input"
-                value={collection.payments.basePriceUsd}
-                onChange={(e) => setCollection({ ...collection, payments: { ...collection.payments, basePriceUsd: Number(e.target.value) } })}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <h2 className="text-lg font-semibold text-white">Payment settings</h2>
+              <PriceUnitToggle unit={priceUnit} onChange={setPriceUnit} solUsd={solUsd} />
+            </div>
+            <Field label={priceUnit === "usd" ? "Base mint price (USD)" : "Base mint price (SOL)"}>
+              <input
+                type="number"
+                min={0}
+                step={priceUnit === "usd" ? 0.01 : 0.001}
+                className="input"
+                value={displayPriceFromUsd(collection.payments.basePriceUsd, priceUnit, solUsd)}
+                onChange={(e) =>
+                  setCollection({
+                    ...collection,
+                    payments: {
+                      ...collection.payments,
+                      basePriceUsd: usdFromDisplayInput(Number(e.target.value), priceUnit, solUsd),
+                    },
+                  })
+                }
               />
+              <p className="mt-1 text-xs text-white/45">
+                {priceUnit === "usd"
+                  ? `≈ ${formatSolAmount(usdToSol(collection.payments.basePriceUsd, solUsd))} SOL at checkout`
+                  : `≈ $${collection.payments.basePriceUsd.toFixed(2)} USD equivalent`}
+              </p>
             </Field>
             <p className="text-xs text-white/50">Accepted payment methods</p>
             {([
@@ -2316,18 +2418,39 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               </p>
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-white">
-              <input type="checkbox" checked={collection.blindMint}
-                onChange={(e) => setCollection({ ...collection, blindMint: e.target.checked })} />
+            <label className={`flex items-center gap-2 text-sm ${collection.revealTrigger === "disabled" ? "text-white/40" : "text-white"}`}>
+              <input
+                type="checkbox"
+                checked={collection.blindMint}
+                disabled={collection.revealTrigger === "disabled"}
+                onChange={(e) => {
+                  const blindMint = e.target.checked;
+                  setCollection({
+                    ...collection,
+                    blindMint,
+                    revealTrigger:
+                      blindMint && collection.revealTrigger === "disabled"
+                        ? "manual"
+                        : collection.revealTrigger,
+                    revealed: blindMint ? false : collection.revealed,
+                  });
+                }}
+              />
               Blind mint
               <span className="text-white/50">(buyers see a placeholder image until reveal)</span>
             </label>
+            {collection.revealTrigger === "disabled" && (
+              <p className="text-xs text-white/45">
+                Enable a reveal trigger other than Disabled to use blind mint.
+              </p>
+            )}
 
             <div>
               <label className="mb-2 block text-sm text-white/60">Reveal trigger</label>
               <div className="space-y-2">
                 {(
                   [
+                    ["disabled",    "Disabled", "No blind mint or scheduled reveal — all art and metadata are visible immediately."],
                     ["manual",      "Manual", "You click 'Reveal' in your creator dashboard whenever you&apos;re ready."],
                     ["at_percent",  "At % sold", "Reveal automatically when a percentage of the supply has been minted."],
                     ["at_sold_out", "At sell-out", "Reveal only after every NFT in the collection has been minted."],
@@ -2341,7 +2464,22 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                         ? "border-primary/60 bg-primary/5"
                         : "border-white/10 hover:border-white/20"
                     }`}
-                    onClick={() => setCollection({ ...collection, revealTrigger: val })}
+                    onClick={() => {
+                      if (val === "disabled") {
+                        setCollection({
+                          ...collection,
+                          revealTrigger: "disabled",
+                          blindMint: false,
+                          revealed: true,
+                        });
+                        return;
+                      }
+                      setCollection({
+                        ...collection,
+                        revealTrigger: val,
+                        revealed: collection.blindMint ? false : collection.revealed,
+                      });
+                    }}
                   >
                     <label className="flex cursor-pointer items-center gap-2">
                       <input type="radio" name="revealTrigger" value={val} readOnly

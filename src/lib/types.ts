@@ -9,6 +9,7 @@ export type ImportProgress = {
 };
 
 export type RevealTrigger =
+  | "disabled"
   | "at_percent"
   | "at_sold_out"
   | "at_datetime"

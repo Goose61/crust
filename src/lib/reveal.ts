@@ -23,6 +23,8 @@ export function applyRevealBatch(collection: Collection): Collection {
 
 /** Apply automatic reveal triggers (percent, datetime, sold-out, staggered). */
 export function applyRevealTriggers(collection: Collection): Collection {
+  if (collection.revealTrigger === "disabled") return collection;
+
   const next = { ...collection, tokens: collection.tokens.map((t) => ({ ...t })) };
   const pct = mintedPercent(next);
   const revealedIds = new Set(next.revealedTokenIds ?? []);
