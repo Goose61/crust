@@ -60,18 +60,6 @@ async function signerAddress(): Promise<string> {
   return Keypair.fromSecretKey(secret).publicKey.toBase58();
 }
 
-async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
-  const rpcUrl = getDirectRpcUrl(getSolanaNetwork());
-  const res = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  const json = (await res.json()) as { result?: T; error?: { message?: string } };
-  if (json.error) throw new Error(json.error.message ?? "Solana RPC error");
-  return json.result as T;
-}
-
 async function fetchBundlerAddress(node: string): Promise<string> {
   const res = await fetch(`${node}/info`);
   if (!res.ok) throw new Error(`Could not reach Irys (${res.status})`);
@@ -117,21 +105,16 @@ async function fundIrysAccount(bytesNeeded: number): Promise<void> {
   const toFund = deficit + deficit / 10n + 1n;
   const bundlerAddress = await fetchBundlerAddress(node);
 
-  const { Keypair, PublicKey, SystemProgram, Transaction } = await import("@solana/web3.js");
+  const { Connection, Keypair, PublicKey, SystemProgram, Transaction } = await import(
+    "@solana/web3.js"
+  );
   const secret = getPlatformSecretKey();
   if (!secret) throw new Error("Missing ARWEAVE_SOLANA_KEY");
   const keypair = Keypair.fromSecretKey(secret);
+  const connection = new Connection(getDirectRpcUrl(getSolanaNetwork()), "confirmed");
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
 
-  const latest = await rpcCall<{ blockhash: string; lastValidBlockHeight: number }>(
-    "getLatestBlockhash",
-    [{ commitment: "confirmed" }],
-  );
-
-  const tx = new Transaction({
-    feePayer: keypair.publicKey,
-    blockhash: latest.blockhash,
-    lastValidBlockHeight: latest.lastValidBlockHeight,
-  });
+  const tx = new Transaction({ feePayer: keypair.publicKey, blockhash, lastValidBlockHeight });
   tx.add(
     SystemProgram.transfer({
       fromPubkey: keypair.publicKey,
@@ -140,10 +123,17 @@ async function fundIrysAccount(bytesNeeded: number): Promise<void> {
     }),
   );
   tx.sign(keypair);
-  const sig = await rpcCall<string>("sendTransaction", [
-    Buffer.from(tx.serialize()).toString("base64"),
-    { encoding: "base64", preflightCommitment: "confirmed" },
-  ]);
+  const sig = await connection.sendRawTransaction(tx.serialize(), {
+    skipPreflight: false,
+    preflightCommitment: "confirmed",
+  });
+  const confirmation = await connection.confirmTransaction(
+    { signature: sig, blockhash, lastValidBlockHeight },
+    "confirmed",
+  );
+  if (confirmation.value.err) {
+    throw new Error("Platform Irys fund transaction failed on-chain");
+  }
 
   await submitFundTxToBundler(sig, node);
 }
