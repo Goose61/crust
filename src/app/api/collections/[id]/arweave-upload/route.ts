@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertCollectionArweaveStoragePaid } from "@/lib/arweave-storage-payment";
-import { uploadToArweaveServer } from "@/lib/irys-server";
+import { ensureIrysFundedForBytes, uploadToArweaveServer } from "@/lib/irys-server";
 import { getCollection, updateCollection } from "@/lib/store";
 import { assertCreatorAuth, requireWalletAuth } from "@/lib/wallet-auth";
 
@@ -58,10 +58,22 @@ export async function POST(req: NextRequest, { params }: Params) {
       minSol,
     });
 
+    let batchBytes = 0;
+    for (const item of items) {
+      batchBytes += Buffer.from(item.imageBase64, "base64").length + 512;
+      batchBytes += Buffer.byteLength(item.metadataJson, "utf8") + 512;
+    }
+    if (body.logo?.dataBase64) {
+      batchBytes += Buffer.from(body.logo.dataBase64, "base64").length + 512;
+    }
+    await ensureIrysFundedForBytes(Math.max(batchBytes, 4096));
+
     const uploaded: Record<number, { imageUri: string; metadataUri: string }> = {};
     for (const item of items) {
       const imageBuf = Buffer.from(item.imageBase64, "base64");
-      const imageUri = await uploadToArweaveServer(imageBuf, item.contentType || "image/png");
+      const imageUri = await uploadToArweaveServer(imageBuf, item.contentType || "image/png", {
+        skipFund: true,
+      });
 
       const meta = JSON.parse(item.metadataJson) as Record<string, unknown>;
       meta.image = imageUri;
@@ -77,6 +89,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       const metadataUri = await uploadToArweaveServer(
         Buffer.from(JSON.stringify(meta)),
         "application/json",
+        { skipFund: true },
       );
       uploaded[item.tokenId] = { imageUri, metadataUri };
     }
@@ -86,6 +99,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       logoUri = await uploadToArweaveServer(
         Buffer.from(body.logo.dataBase64, "base64"),
         body.logo.contentType || "image/png",
+        { skipFund: true },
       );
     }
 
@@ -111,13 +125,15 @@ export async function POST(req: NextRequest, { params }: Params) {
       logoUri,
     });
   } catch (err) {
-    console.error("[POST /api/collections/[id]/arweave-upload v2]", err);
+    console.error("[POST /api/collections/[id]/arweave-upload v3]", err);
     const message = err instanceof Error ? err.message : "Arweave upload failed";
     const status =
       message.includes("signature") ||
       message.includes("Unauthorized") ||
       message.includes("creator") ||
-      message.includes("payment")
+      message.includes("payment") ||
+      message.includes("insufficient SOL") ||
+      message.includes("storage payment")
         ? 402
         : 500;
     return NextResponse.json({ error: message }, { status });

@@ -93,10 +93,18 @@ async function submitFundTxToBundler(txId: string, node: string): Promise<void> 
   throw new Error(`Bundler could not confirm fund tx ${txId}: ${lastError}`);
 }
 
-async function fundIrysAccount(bytesNeeded: number): Promise<void> {
+const TX_FEE_RESERVE_LAMPORTS = 50_000n;
+
+function lamportsToSolStr(lamports: bigint): string {
+  return (Number(lamports) / 1e9).toFixed(6);
+}
+
+/** Top up the platform Irys account when bundler balance is below the upload price. */
+export async function ensureIrysFundedForBytes(bytesNeeded: number): Promise<void> {
   const node = irysNodeUrl();
   const address = await signerAddress();
-  const devnet = isDevnetNetwork(getSolanaNetwork());
+  const network = getSolanaNetwork();
+  const devnet = isDevnetNetwork(network);
   const price = await fetchIrysPriceLamports(bytesNeeded, devnet);
   const balance = await fetchIrysAccountBalanceLamports(address, devnet);
   if (balance >= price) return;
@@ -105,15 +113,24 @@ async function fundIrysAccount(bytesNeeded: number): Promise<void> {
   const toFund = deficit + deficit / 10n + 1n;
   const bundlerAddress = await fetchBundlerAddress(node);
 
-  const { Connection, Keypair, PublicKey, SystemProgram, Transaction } = await import(
-    "@solana/web3.js"
-  );
+  const { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SendTransactionError, SystemProgram, Transaction } =
+    await import("@solana/web3.js");
   const secret = getPlatformSecretKey();
   if (!secret) throw new Error("Missing ARWEAVE_SOLANA_KEY");
   const keypair = Keypair.fromSecretKey(secret);
-  const connection = new Connection(getDirectRpcUrl(getSolanaNetwork()), "confirmed");
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+  const connection = new Connection(getDirectRpcUrl(network), "confirmed");
+  const onChainLamports = BigInt(await connection.getBalance(keypair.publicKey));
 
+  if (onChainLamports < toFund + TX_FEE_RESERVE_LAMPORTS) {
+    throw new Error(
+      `Platform wallet (${address}) has insufficient SOL on ${network} to fund Arweave uploads ` +
+        `(~${lamportsToSolStr(onChainLamports)} SOL available, ~${lamportsToSolStr(toFund + TX_FEE_RESERVE_LAMPORTS)} SOL required). ` +
+        `Your storage payment must reach this wallet on the same network as SOLANA_NETWORK. ` +
+        `If you already paid, confirm Phantom used ${network} and contact support with your payment signature.`,
+    );
+  }
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
   const tx = new Transaction({ feePayer: keypair.publicKey, blockhash, lastValidBlockHeight });
   tx.add(
     SystemProgram.transfer({
@@ -123,10 +140,30 @@ async function fundIrysAccount(bytesNeeded: number): Promise<void> {
     }),
   );
   tx.sign(keypair);
-  const sig = await connection.sendRawTransaction(tx.serialize(), {
-    skipPreflight: false,
-    preflightCommitment: "confirmed",
-  });
+
+  const simulation = await connection.simulateTransaction(tx);
+  if (simulation.value.err) {
+    const logs = simulation.value.logs?.join("\n") || "(none)";
+    throw new Error(
+      `Platform Irys fund simulation failed on ${network}: ${JSON.stringify(simulation.value.err)}. ` +
+        `Wallet ${address} balance ~${(Number(onChainLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL. Logs: ${logs}`,
+    );
+  }
+
+  let sig: string;
+  try {
+    sig = await connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: "confirmed",
+    });
+  } catch (err) {
+    if (err instanceof SendTransactionError) {
+      const logs = err.logs?.join("\n") || "(none)";
+      throw new Error(`Platform Irys fund tx rejected: ${err.message}. Logs: ${logs}`);
+    }
+    throw err;
+  }
+
   const confirmation = await connection.confirmTransaction(
     { signature: sig, blockhash, lastValidBlockHeight },
     "confirmed",
@@ -185,8 +222,11 @@ async function buildSignedDataItem(
 export async function uploadToArweaveServer(
   data: Buffer,
   contentType: string,
+  opts?: { skipFund?: boolean },
 ): Promise<string> {
-  await fundIrysAccount(data.length + 512);
+  if (!opts?.skipFund) {
+    await ensureIrysFundedForBytes(data.length + 512);
+  }
   const { item, id } = await buildSignedDataItem(data, contentType);
   try {
     const postedId = await postSignedDataItem(item.getRaw());
