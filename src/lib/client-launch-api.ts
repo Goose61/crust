@@ -175,6 +175,7 @@ export async function fetchStorageEstimate(
   sol: number;
   serverBulkUpload?: boolean;
   platformWallet?: string | null;
+  storagePaid?: boolean;
 }> {
   const headers = authHeaders ?? (await buildAuthHeaders(wallet));
   const res = await fetch(
@@ -186,6 +187,7 @@ export async function fetchStorageEstimate(
     sol: number;
     serverBulkUpload?: boolean;
     platformWallet?: string | null;
+    storagePaid?: boolean;
     error?: string;
   }>(res);
   if (!res.ok) throw new Error(data.error || "Could not estimate storage");
@@ -194,5 +196,6 @@ export async function fetchStorageEstimate(
     sol: data.sol,
     serverBulkUpload: data.serverBulkUpload,
     platformWallet: data.platformWallet,
+    storagePaid: data.storagePaid,
   };
 }

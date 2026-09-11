@@ -21,6 +21,8 @@ export type TokenUploadProgress = {
 export type CollectionUploadProgress = {
   completed: Record<number, TokenUploadProgress>;
   logoUri?: string;
+  /** SOL tx used for bulk server upload — reused if upload fails before server records payment. */
+  storagePaymentSignature?: string;
 };
 
 function imageKey(collectionId: string, tokenId: number): string {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCollection } from "@/lib/store";
 import { assertCreatorAuth, requireWalletAuth } from "@/lib/wallet-auth";
 import { fetchIrysPriceLamports } from "@/lib/irys-shared";
-import { isServerBulkArweaveAvailable } from "@/lib/arweave-storage-payment";
+import { isCollectionArweaveStoragePaid, isServerBulkArweaveAvailable } from "@/lib/arweave-storage-payment";
 import { getPlatformPublicKey } from "@/lib/platform-key";
 import { getSolanaNetwork, isDevnetNetwork } from "@/lib/solana-config";
 
@@ -30,6 +30,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     const devnet = isDevnetNetwork(network);
     const lamports = await fetchIrysPriceLamports(totalBytes, devnet);
     const sol = Number(lamports) / 1e9;
+    const storagePaid = await isCollectionArweaveStoragePaid(id);
 
     return NextResponse.json({
       totalBytes,
@@ -38,6 +39,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       network,
       serverBulkUpload: isServerBulkArweaveAvailable(),
       platformWallet: getPlatformPublicKey(),
+      storagePaid,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Estimate failed";

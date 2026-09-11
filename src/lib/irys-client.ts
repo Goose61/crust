@@ -547,7 +547,7 @@ export async function uploadCollectionViaServer(params: {
   tokens: CollectionUploadToken[];
   logoBytes?: Uint8Array;
   logoContentType?: string;
-  paymentSignature: string;
+  paymentSignature?: string;
   minSol: number;
   authHeaders: Record<string, string>;
   existingProgress?: Record<number, { imageUri: string; metadataUri: string }>;

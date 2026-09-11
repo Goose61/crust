@@ -1154,6 +1154,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       }
 
       const totalBytes = await estimateArweaveBytes(current.id, tokenList.length);
+      const existingProgress = await loadUploadProgress(current.id);
       const estimate = await fetchStorageEstimate(publicKey, current.id, totalBytes);
       const authHeaders = await buildAuthHeaders(publicKey);
       const network = await getClientNetwork();
@@ -1165,14 +1166,27 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         tokenList.length > 1;
 
       if (useServerBulk) {
-        setGoLivePhase(
-          `Approve one-time storage payment (~${estimate.sol.toFixed(4)} SOL) in your wallet…`,
-        );
-        paymentSignature = await payPlatformForArweaveStorage(
-          estimate.sol,
-          estimate.platformWallet!,
-          network,
-        );
+        if (estimate.storagePaid) {
+          setGoLivePhase("Resuming Arweave upload (storage already paid)…");
+          paymentSignature = existingProgress?.storagePaymentSignature;
+        } else if (existingProgress?.storagePaymentSignature) {
+          setGoLivePhase("Resuming Arweave upload — verifying prior payment…");
+          paymentSignature = existingProgress.storagePaymentSignature;
+        } else {
+          setGoLivePhase(
+            `Approve one-time storage payment (~${estimate.sol.toFixed(4)} SOL) in your wallet…`,
+          );
+          paymentSignature = await payPlatformForArweaveStorage(
+            estimate.sol,
+            estimate.platformWallet!,
+            network,
+          );
+          await saveUploadProgress(current.id, {
+            completed: existingProgress?.completed ?? {},
+            logoUri: existingProgress?.logoUri,
+            storagePaymentSignature: paymentSignature,
+          });
+        }
         setGoLivePhase("Uploading to Arweave — keep this tab open…");
       } else {
         setGoLivePhase(
@@ -1180,7 +1194,6 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         );
       }
 
-      const existingProgress = await loadUploadProgress(current.id);
       const uploadTokens = [];
       for (const token of tokenList) {
         const asset = await getImage(current.id, token.tokenId);
@@ -1222,7 +1235,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             tokens: uploadTokens,
             logoBytes,
             logoContentType: logoAsset?.contentType,
-            paymentSignature: paymentSignature!,
+            paymentSignature,
             minSol: estimate.sol,
             authHeaders,
             existingProgress: existingProgress?.completed,
@@ -1268,6 +1281,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       await saveUploadProgress(current.id, {
         completed: uploaded.tokens,
         logoUri: uploaded.logoUri,
+        storagePaymentSignature:
+          paymentSignature ?? existingProgress?.storagePaymentSignature,
       });
 
       const uriRows = tokenList.map((t) => {

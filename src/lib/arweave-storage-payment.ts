@@ -14,6 +14,13 @@ export function isServerBulkArweaveAvailable(): boolean {
   return !!getPlatformPublicKey();
 }
 
+export async function isCollectionArweaveStoragePaid(collectionId: string): Promise<boolean> {
+  const db = await getDb();
+  const col = db.collection<CollectionArweavePayment>("collection_arweave_payments");
+  const existing = await col.findOne({ collectionId });
+  return !!existing;
+}
+
 /** Verify a one-time SOL storage payment, or accept an already-recorded payment for this collection. */
 export async function assertCollectionArweaveStoragePaid(params: {
   collectionId: string;
