@@ -4,6 +4,7 @@ import {
   IRYS_GATEWAY,
   IRYS_NODE_DEVNET,
   IRYS_NODE_MAINNET,
+  fetchIrysAccountBalanceLamports,
   fetchIrysPriceLamports,
 } from "./irys-shared";
 import { getDirectRpcUrl, getSolanaNetwork, isDevnetNetwork } from "./solana-config";
@@ -107,12 +108,9 @@ async function submitFundTxToBundler(txId: string, node: string): Promise<void> 
 async function fundIrysAccount(bytesNeeded: number): Promise<void> {
   const node = irysNodeUrl();
   const address = await signerAddress();
-  const price = await fetchIrysPriceLamports(bytesNeeded, isDevnetNetwork(getSolanaNetwork()));
-  const balanceRes = await fetch(`${node}/account/balance/solana?address=${address}`);
-  if (!balanceRes.ok) {
-    throw new Error(`Could not read Irys balance (${balanceRes.status})`);
-  }
-  const balance = BigInt((await balanceRes.text()).trim() || "0");
+  const devnet = isDevnetNetwork(getSolanaNetwork());
+  const price = await fetchIrysPriceLamports(bytesNeeded, devnet);
+  const balance = await fetchIrysAccountBalanceLamports(address, devnet);
   if (balance >= price) return;
 
   const deficit = price > balance ? price - balance : 0n;
