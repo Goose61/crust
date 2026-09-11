@@ -111,7 +111,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       logoUri,
     });
   } catch (err) {
-    console.error("[POST /api/collections/[id]/arweave-upload]", err);
+    console.error("[POST /api/collections/[id]/arweave-upload v2]", err);
     const message = err instanceof Error ? err.message : "Arweave upload failed";
     const status =
       message.includes("signature") ||
