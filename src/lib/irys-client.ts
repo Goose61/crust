@@ -549,7 +549,8 @@ export async function uploadCollectionViaServer(params: {
   logoContentType?: string;
   paymentSignature?: string;
   minSol: number;
-  authHeaders: Record<string, string>;
+  /** Called before each batch so auth stays fresh during long uploads. */
+  getAuthHeaders: () => Promise<Record<string, string>>;
   existingProgress?: Record<number, { imageUri: string; metadataUri: string }>;
   existingLogoUri?: string;
   onProgress?: (p: CollectionUploadProgress) => void;
@@ -578,11 +579,12 @@ export async function uploadCollectionViaServer(params: {
       });
     }
 
+    const authHeaders = await params.getAuthHeaders();
     const res = await fetch(`/api/collections/${params.collectionId}/arweave-upload`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...params.authHeaders,
+        ...authHeaders,
       },
       body: JSON.stringify({
         minSol: params.minSol,
@@ -619,11 +621,12 @@ export async function uploadCollectionViaServer(params: {
 
   if (params.logoBytes && !logoUri) {
     params.onProgress?.({ done, total: totalSteps, phase: "uploading-logo" });
+    const logoAuthHeaders = await params.getAuthHeaders();
     const res = await fetch(`/api/collections/${params.collectionId}/arweave-upload`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...params.authHeaders,
+        ...logoAuthHeaders,
       },
       body: JSON.stringify({
         minSol: params.minSol,

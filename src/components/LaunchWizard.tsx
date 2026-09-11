@@ -75,6 +75,11 @@ import {
   readRememberedLaunchDraft,
 } from "@/lib/launch-resume";
 import {
+  fetchLaunchCostEstimate,
+  formatLaunchBytes,
+  type LaunchCostEstimate,
+} from "@/lib/launch-cost-estimate";
+import {
   formatSolAmount,
   SOL_USD_FALLBACK,
   usdFromDisplayInput,
@@ -277,6 +282,9 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   const [priceUnit, setPriceUnit] = useState<PriceDisplayUnit>("usd");
   const [solUsd, setSolUsd] = useState(SOL_USD_FALLBACK);
+  const [launchCosts, setLaunchCosts] = useState<LaunchCostEstimate | null>(null);
+  const [launchCostsLoading, setLaunchCostsLoading] = useState(false);
+  const [launchCostsError, setLaunchCostsError] = useState<string | null>(null);
 
   const uploadInProgressRef = useRef(false);
   const rezipInputRef = useRef<HTMLInputElement>(null);
@@ -297,12 +305,41 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const buybackEnabled =
     royaltyBuyback || (collection?.fees.buybackPercent ?? 0) > 0;
 
-  /* estimated storage & launch cost */
-  const estimatedStorageMB = collection ? (collection.tokens.length * 201) / 1024 : 0;
-  const estimatedStorageUsd = Math.max(0.05, estimatedStorageMB * 0.006);
   const estimatedMintRevenue = collection
     ? collection.tokens.length * collection.payments.basePriceUsd
     : 0;
+
+  const onGoLiveStep = Boolean(mode && STEPS[step] === "Go live");
+
+  useEffect(() => {
+    if (!onGoLiveStep || !collection || !publicKey) {
+      setLaunchCosts(null);
+      setLaunchCostsError(null);
+      return;
+    }
+    let cancelled = false;
+    setLaunchCostsLoading(true);
+    setLaunchCostsError(null);
+    void fetchLaunchCostEstimate(publicKey, collection.id, collection.tokens.length)
+      .then((est) => {
+        if (!cancelled) {
+          setLaunchCosts(est);
+          setSolUsd(est.solUsd);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setLaunchCostsError(e instanceof Error ? e.message : "Could not estimate launch costs");
+          setLaunchCosts(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLaunchCostsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onGoLiveStep, collection?.id, collection?.tokens.length, publicKey]);
 
   const metadataReview = useMemo(
     () => (collection ? reviewCollectionMetadata(collection) : null),
@@ -1156,7 +1193,6 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       const totalBytes = await estimateArweaveBytes(current.id, tokenList.length);
       const existingProgress = await loadUploadProgress(current.id);
       const estimate = await fetchStorageEstimate(publicKey, current.id, totalBytes);
-      const authHeaders = await buildAuthHeaders(publicKey);
       const network = await getClientNetwork();
 
       let paymentSignature: string | undefined;
@@ -1237,7 +1273,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             logoContentType: logoAsset?.contentType,
             paymentSignature,
             minSol: estimate.sol,
-            authHeaders,
+            getAuthHeaders: () => buildAuthHeaders(publicKey),
             existingProgress: existingProgress?.completed,
             existingLogoUri: existingProgress?.logoUri,
             onProgress: (p) => {
@@ -2691,26 +2727,69 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
 
             {/* Launch cost estimate */}
             <div className="rounded-xl border border-white/15 bg-white/5 p-4">
-              <h3 className="mb-3 text-sm font-semibold text-white">Estimated launch costs</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between text-white/70">
-                  <span>Permanent storage ({collection.tokens.length} images + metadata)</span>
-                  <span>~${estimatedStorageUsd.toFixed(2)}</span>
+              <h3 className="mb-3 text-sm font-semibold text-white">Launch costs</h3>
+              {!publicKey ? (
+                <p className="text-sm text-white/50">
+                  Connect your creator wallet to see exact Arweave storage costs for this collection.
+                </p>
+              ) : launchCostsLoading ? (
+                <p className="text-sm text-white/50">Calculating storage from your uploaded assets…</p>
+              ) : launchCostsError ? (
+                <p className="text-sm text-red-300">{launchCostsError}</p>
+              ) : launchCosts ? (
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between gap-4 text-white/70">
+                    <span>
+                      Arweave storage ({collection.tokens.length} NFTs ·{" "}
+                      {formatLaunchBytes(launchCosts.totalBytes)})
+                    </span>
+                    <span className="shrink-0 text-right">
+                      {formatSolAmount(launchCosts.storageSol)} SOL
+                      <span className="block text-xs text-white/40">
+                        ≈ ${launchCosts.storageUsd.toFixed(2)}
+                      </span>
+                    </span>
+                  </div>
+                  {launchCosts.storagePaid ? (
+                    <div className="flex justify-between text-emerald-400/90">
+                      <span>Storage payment</span>
+                      <span>Paid — resume upload only</span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between text-white/70">
+                      <span>Wallet payment (+2% buffer)</span>
+                      <span className="shrink-0 text-right">
+                        {formatSolAmount(launchCosts.storageSolDue)} SOL
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-white/70">
+                    <span>Solana transaction fee (storage payment)</span>
+                    <span>{formatSolAmount(launchCosts.txFeeSol)} SOL</span>
+                  </div>
+                  <div className="flex justify-between text-white/70">
+                    <span>Crypgo launch fee</span>
+                    <span>$0</span>
+                  </div>
+                  <div className="mt-2 flex justify-between border-t border-white/10 pt-2 font-medium text-white">
+                    <span>Total due at Go Live</span>
+                    <span className="shrink-0 text-right">
+                      {formatSolAmount(launchCosts.totalSol)} SOL
+                      <span className="block text-xs font-normal text-white/50">
+                        ≈ ${launchCosts.totalUsd.toFixed(2)}
+                      </span>
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between text-white/70">
-                  <span>Solana transaction fees</span>
-                  <span>~$0.01</span>
-                </div>
-                <div className="mt-2 flex justify-between border-t border-white/10 pt-2 font-medium text-white">
-                  <span>Total upfront</span>
-                  <span>~${(estimatedStorageUsd + 0.01).toFixed(2)}</span>
-                </div>
-              </div>
+              ) : null}
               <p className="mt-3 text-[11px] text-white/35">
-                Arweave storage is paid from your connected wallet at go-live (~$0.006/MB). Keep this
-                tab open during upload. No Crypgo launch fee — marketplace takes{" "}
-                {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint ({PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax)
-                and {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales only.
+                {launchCosts?.serverBulkUpload
+                  ? "One wallet payment covers all uploads — no per-file signatures. "
+                  : "You fund Arweave from your wallet and sign each upload. "}
+                Keep this tab open until upload finishes (large collections can take over an hour).
+                No Crypgo launch fee — marketplace takes {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint (
+                {PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax) and{" "}
+                {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales only.
               </p>
               {estimatedMintRevenue > 0 && (
                 <p className="mt-1 text-[11px] text-emerald-400/70">

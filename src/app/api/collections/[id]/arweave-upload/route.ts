@@ -128,13 +128,16 @@ export async function POST(req: NextRequest, { params }: Params) {
     console.error("[POST /api/collections/[id]/arweave-upload v3]", err);
     const message = err instanceof Error ? err.message : "Arweave upload failed";
     const status =
+      message.includes("Wallet signature required") ||
       message.includes("signature") ||
       message.includes("Unauthorized") ||
       message.includes("creator") ||
       message.includes("payment") ||
       message.includes("insufficient SOL") ||
       message.includes("storage payment")
-        ? 402
+        ? message.includes("Wallet signature required")
+          ? 401
+          : 402
         : 500;
     return NextResponse.json({ error: message }, { status });
   }

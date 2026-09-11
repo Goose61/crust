@@ -4,7 +4,7 @@ import { authMessageBytes } from "./wallet-auth";
 import { getActiveWallet } from "./wallet-session";
 
 /** Must stay in sync with server MAX_AGE_MS in wallet-auth.ts */
-export const AUTH_TTL_MS = 5 * 60 * 1000;
+export const AUTH_TTL_MS = 2 * 60 * 60 * 1000;
 const AUTH_CACHE_BUFFER_MS = 30_000;
 
 function bytesToBase64(bytes: Uint8Array): string {

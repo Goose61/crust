@@ -173,6 +173,12 @@ export async function fetchStorageEstimate(
 ): Promise<{
   lamports: string;
   sol: number;
+  solWithBuffer: number;
+  txFeeSol: number;
+  totalUpfrontSol: number;
+  solPriceUsd: number | null;
+  storageUsd: number | null;
+  totalUpfrontUsd: number | null;
   serverBulkUpload?: boolean;
   platformWallet?: string | null;
   storagePaid?: boolean;
@@ -185,15 +191,29 @@ export async function fetchStorageEstimate(
   const data = await readJsonResponse<{
     lamports: string;
     sol: number;
+    solWithBuffer?: number;
+    txFeeSol?: number;
+    totalUpfrontSol?: number;
+    solPriceUsd?: number | null;
+    storageUsd?: number | null;
+    totalUpfrontUsd?: number | null;
     serverBulkUpload?: boolean;
     platformWallet?: string | null;
     storagePaid?: boolean;
     error?: string;
   }>(res);
   if (!res.ok) throw new Error(data.error || "Could not estimate storage");
+  const solWithBuffer = data.solWithBuffer ?? data.sol * 1.02;
+  const txFeeSol = data.txFeeSol ?? 0.00001;
   return {
     lamports: data.lamports,
     sol: data.sol,
+    solWithBuffer: data.storagePaid ? 0 : solWithBuffer,
+    txFeeSol,
+    totalUpfrontSol: data.totalUpfrontSol ?? solWithBuffer + txFeeSol,
+    solPriceUsd: data.solPriceUsd ?? null,
+    storageUsd: data.storageUsd ?? null,
+    totalUpfrontUsd: data.totalUpfrontUsd ?? null,
     serverBulkUpload: data.serverBulkUpload,
     platformWallet: data.platformWallet,
     storagePaid: data.storagePaid,

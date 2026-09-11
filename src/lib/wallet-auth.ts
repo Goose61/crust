@@ -2,7 +2,8 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
 const AUTH_PREFIX = "Dough Boi Auth: ";
-const MAX_AGE_MS = 5 * 60 * 1000;
+/** Long uploads (600+ Arweave files) can run 60–90+ minutes — keep auth valid for the session. */
+const MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 export function authMessage(timestamp: number): string {
   return `${AUTH_PREFIX}${timestamp}`;
