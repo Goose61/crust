@@ -18,6 +18,7 @@ import { getPlatformSecretKey } from "./platform-key";
 import { buildCreatorsFromRoyaltySplit } from "./metadata-builders";
 import type { Collection } from "./types";
 import { uploadBlobText } from "./blob-storage";
+import { isServerArweaveUploadAvailable, uploadToArweaveServer } from "./irys-server";
 
 async function sendTxBase64(rpcUrl: string, txBase64: string): Promise<string> {
   const res = await fetch(rpcUrl, {
@@ -66,10 +67,16 @@ export async function ensureCollectionMetadataUri(collection: Collection): Promi
     },
   };
 
-  return uploadBlobText(
-    `collections/${collection.id}/collection.json`,
-    JSON.stringify(payload, null, 2),
-  );
+  const json = JSON.stringify(payload, null, 2);
+
+  if (isServerArweaveUploadAvailable()) {
+    return uploadToArweaveServer(Buffer.from(json, "utf8"), "application/json", {
+      skipFund: true,
+      paidBy: collection.payments.creatorWallet || undefined,
+    });
+  }
+
+  return uploadBlobText(`collections/${collection.id}/collection.json`, json);
 }
 
 export type CreateCoreCollectionResult = {

@@ -1239,99 +1239,141 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         logoBytes = new Uint8Array(logoAsset.data);
       }
 
-      if (useServerBulk) {
-        setGoLivePhase(
-          `Step 1/2 — Fund Irys (~${estimate.walletPaymentSol.toFixed(4)} SOL) from your wallet…`,
-        );
-        await fundCreatorIrysForBytes({
-          network,
-          totalBytes,
-          onFundNeeded: () => {
-            setGoLivePhase("Approve Irys storage funding in your wallet…");
-          },
-        });
-        setGoLivePhase("Step 2/2 — Authorize bulk upload (one signature, no per-file approvals)…");
-        await ensureCreatorIrysUploadDelegate({
-          network,
-          delegateAddress: estimate.uploadDelegateAddress!,
-          totalBytes,
-          onSign: () => {
-            setGoLivePhase("Approve upload authorization in your wallet…");
-          },
-        });
-      } else {
-        setGoLivePhase(
-          `Funding Arweave storage (~${estimate.walletPaymentSol.toFixed(4)} SOL to Irys) — approve in your wallet…`,
-        );
+      try {
+        const headers = await buildAuthHeaders(publicKey);
+        const res = await fetch(`/api/collections/${current.id}`, { headers });
+        if (res.ok) {
+          const data = await readJsonResponse<{ collection: Collection }>(res);
+          current = data.collection;
+        }
+      } catch {
+        // keep local draft if refresh fails
       }
 
-      setGoLivePhase("Uploading to Arweave — keep this tab open…");
+      const alreadyOnArweave =
+        current.irysPublished &&
+        tokenList.every(
+          (t) => {
+            const row = current!.tokens.find((x) => x.tokenId === t.tokenId);
+            return (
+              row?.imageUri?.startsWith("http") && row?.metadataUri?.startsWith("http")
+            );
+          },
+        );
 
-      const uploaded = useServerBulk
-        ? await uploadCollectionViaServer({
-            collectionId: current.id,
-            wallet: publicKey,
-            tokens: uploadTokens,
-            logoBytes,
-            logoContentType: logoAsset?.contentType,
-            getAuthHeaders: () => buildAuthHeaders(publicKey),
-            existingProgress: existingProgress?.completed,
-            existingLogoUri: existingProgress?.logoUri,
-            onProgress: (p) => {
-              if (p.phase === "uploading-logo") {
-                setArweaveUploadDetail("Uploading logo…");
-              } else {
-                setArweaveUploadDetail(
-                  p.tokenId != null
-                    ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
-                    : `${p.done} / ${p.total} uploads`,
-                );
-              }
-            },
-          })
-        : await uploadCollectionWithPhantom({
-            collectionId: current.id,
-            tokens: uploadTokens,
-            logoBytes,
-            logoContentType: logoAsset?.contentType,
+      let uploaded: {
+        tokens: Record<number, { imageUri: string; metadataUri: string }>;
+        logoUri?: string;
+      };
+
+      if (alreadyOnArweave) {
+        setGoLivePhase("Arweave upload already complete — finishing on-chain launch…");
+        const tokens: Record<number, { imageUri: string; metadataUri: string }> = {};
+        for (const t of tokenList) {
+          tokens[t.tokenId] = {
+            imageUri: t.imageUri!,
+            metadataUri: t.metadataUri!,
+          };
+        }
+        uploaded = {
+          tokens,
+          logoUri: current.logoUrl?.startsWith("http") ? current.logoUrl : undefined,
+        };
+      } else {
+        if (useServerBulk) {
+          setGoLivePhase(
+            `Step 1/2 — Fund Irys (~${estimate.walletPaymentSol.toFixed(4)} SOL) from your wallet…`,
+          );
+          await fundCreatorIrysForBytes({
             network,
-            existingProgress: existingProgress?.completed,
-            existingLogoUri: existingProgress?.logoUri,
+            totalBytes,
             onFundNeeded: () => {
-              setGoLivePhase("Approve Irys storage payment in your wallet…");
-            },
-            onProgress: (p) => {
-              if (p.phase === "funding") {
-                setGoLivePhase("Approve Irys storage payment in your wallet…");
-              } else if (p.phase === "uploading-logo") {
-                setArweaveUploadDetail("Uploading logo…");
-              } else {
-                setArweaveUploadDetail(
-                  p.tokenId != null
-                    ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
-                    : `${p.done} / ${p.total} uploads`,
-                );
-              }
+              setGoLivePhase("Approve Irys storage funding in your wallet…");
             },
           });
+          setGoLivePhase("Step 2/2 — Authorize bulk upload (one signature, no per-file approvals)…");
+          await ensureCreatorIrysUploadDelegate({
+            network,
+            delegateAddress: estimate.uploadDelegateAddress!,
+            totalBytes,
+            onSign: () => {
+              setGoLivePhase("Approve upload authorization in your wallet…");
+            },
+          });
+        } else {
+          setGoLivePhase(
+            `Funding Arweave storage (~${estimate.walletPaymentSol.toFixed(4)} SOL to Irys) — approve in your wallet…`,
+          );
+        }
 
-      await saveUploadProgress(current.id, {
-        completed: uploaded.tokens,
-        logoUri: uploaded.logoUri,
-      });
+        setGoLivePhase("Uploading to Arweave — keep this tab open…");
 
-      const uriRows = tokenList.map((t) => {
-        const u = uploaded.tokens[t.tokenId];
-        if (!u) throw new Error(`Missing upload result for token #${t.tokenId}`);
-        return { tokenId: t.tokenId, imageUri: u.imageUri, metadataUri: u.metadataUri };
-      });
+        uploaded = useServerBulk
+          ? await uploadCollectionViaServer({
+              collectionId: current.id,
+              wallet: publicKey,
+              tokens: uploadTokens,
+              logoBytes,
+              logoContentType: logoAsset?.contentType,
+              getAuthHeaders: () => buildAuthHeaders(publicKey),
+              existingProgress: existingProgress?.completed,
+              existingLogoUri: existingProgress?.logoUri,
+              onProgress: (p) => {
+                if (p.phase === "uploading-logo") {
+                  setArweaveUploadDetail("Uploading logo…");
+                } else {
+                  setArweaveUploadDetail(
+                    p.tokenId != null
+                      ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
+                      : `${p.done} / ${p.total} uploads`,
+                  );
+                }
+              },
+            })
+          : await uploadCollectionWithPhantom({
+              collectionId: current.id,
+              tokens: uploadTokens,
+              logoBytes,
+              logoContentType: logoAsset?.contentType,
+              network,
+              existingProgress: existingProgress?.completed,
+              existingLogoUri: existingProgress?.logoUri,
+              onFundNeeded: () => {
+                setGoLivePhase("Approve Irys storage payment in your wallet…");
+              },
+              onProgress: (p) => {
+                if (p.phase === "funding") {
+                  setGoLivePhase("Approve Irys storage payment in your wallet…");
+                } else if (p.phase === "uploading-logo") {
+                  setArweaveUploadDetail("Uploading logo…");
+                } else {
+                  setArweaveUploadDetail(
+                    p.tokenId != null
+                      ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
+                      : `${p.done} / ${p.total} uploads`,
+                  );
+                }
+              },
+            });
 
-      setGoLivePhase("Saving permanent URIs…");
-      current = await patchCollectionUris(publicKey, current.id, {
-        tokens: uriRows,
-        logoUrl: uploaded.logoUri,
-        irysPublished: true,
-      });
+        await saveUploadProgress(current.id, {
+          completed: uploaded.tokens,
+          logoUri: uploaded.logoUri,
+        });
+
+        const uriRows = tokenList.map((t) => {
+          const u = uploaded.tokens[t.tokenId];
+          if (!u) throw new Error(`Missing upload result for token #${t.tokenId}`);
+          return { tokenId: t.tokenId, imageUri: u.imageUri, metadataUri: u.metadataUri };
+        });
+
+        setGoLivePhase("Saving permanent URIs…");
+        current = await patchCollectionUris(publicKey, current.id, {
+          tokens: uriRows,
+          logoUrl: uploaded.logoUri,
+          irysPublished: true,
+        });
+      }
 
       setGoLivePhase("Creating on-chain collection…");
       current =
