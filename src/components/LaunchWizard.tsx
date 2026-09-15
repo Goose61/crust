@@ -1210,10 +1210,10 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           paymentSignature = existingProgress.storagePaymentSignature;
         } else {
           setGoLivePhase(
-            `Approve one-time storage payment (~${estimate.sol.toFixed(4)} SOL) in your wallet…`,
+            `Approve one-time storage payment (~${estimate.walletPaymentSol.toFixed(4)} SOL) in your wallet…`,
           );
           paymentSignature = await payPlatformForArweaveStorage(
-            estimate.sol,
+            estimate.irysTotalSol,
             estimate.platformWallet!,
             network,
           );
@@ -1226,7 +1226,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         setGoLivePhase("Uploading to Arweave — keep this tab open…");
       } else {
         setGoLivePhase(
-          `Funding Arweave storage (~${estimate.sol.toFixed(4)} SOL) — approve in your wallet…`,
+          `Funding Arweave storage (~${estimate.walletPaymentSol.toFixed(4)} SOL) — approve in your wallet…`,
         );
       }
 
@@ -1272,7 +1272,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             logoBytes,
             logoContentType: logoAsset?.contentType,
             paymentSignature,
-            minSol: estimate.sol,
+            minSol: estimate.irysTotalSol,
             getAuthHeaders: () => buildAuthHeaders(publicKey),
             existingProgress: existingProgress?.completed,
             existingLogoUri: existingProgress?.logoUri,
@@ -2738,16 +2738,28 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 <p className="text-sm text-red-300">{launchCostsError}</p>
               ) : launchCosts ? (
                 <div className="space-y-2 text-sm">
+                  <div className="mb-2 flex items-center justify-between text-xs">
+                    <span className="text-white/45">Network</span>
+                    <span className="rounded-full bg-white/10 px-2 py-0.5 font-medium uppercase text-white/80">
+                      {launchCosts.network}
+                    </span>
+                  </div>
                   <div className="flex justify-between gap-4 text-white/70">
                     <span>
-                      Arweave storage ({collection.tokens.length} NFTs ·{" "}
+                      Irys / Arweave storage ({collection.tokens.length} NFTs ·{" "}
                       {formatLaunchBytes(launchCosts.totalBytes)})
                     </span>
                     <span className="shrink-0 text-right">
-                      {formatSolAmount(launchCosts.storageSol)} SOL
+                      {formatSolAmount(launchCosts.irysBaseSol)} SOL
                       <span className="block text-xs text-white/40">
-                        ≈ ${launchCosts.storageUsd.toFixed(2)}
+                        ≈ ${launchCosts.irysBaseUsd.toFixed(2)}
                       </span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-white/60">
+                    <span>Irys bundler buffer (+10%)</span>
+                    <span className="shrink-0 text-right">
+                      {formatSolAmount(launchCosts.irysBundlerBufferSol)} SOL
                     </span>
                   </div>
                   {launchCosts.storagePaid ? (
@@ -2756,28 +2768,50 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                       <span>Paid — resume upload only</span>
                     </div>
                   ) : (
-                    <div className="flex justify-between text-white/70">
-                      <span>Wallet payment (+2% buffer)</span>
-                      <span className="shrink-0 text-right">
-                        {formatSolAmount(launchCosts.storageSolDue)} SOL
-                      </span>
-                    </div>
+                    <>
+                      <div className="flex justify-between text-white/60">
+                        <span>Wallet payment buffer (+2%)</span>
+                        <span className="shrink-0 text-right">
+                          {formatSolAmount(launchCosts.walletBufferSol)} SOL
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-white/70">
+                        <span>→ Transfer to platform (Irys + buffers)</span>
+                        <span className="shrink-0 text-right">
+                          {formatSolAmount(launchCosts.walletPaymentSol)} SOL
+                          <span className="block text-xs text-white/40">
+                            ≈ ${launchCosts.walletPaymentUsd.toFixed(2)}
+                          </span>
+                        </span>
+                      </div>
+                    </>
                   )}
                   <div className="flex justify-between text-white/70">
-                    <span>Solana transaction fee (storage payment)</span>
-                    <span>{formatSolAmount(launchCosts.txFeeSol)} SOL</span>
+                    <span>Solana gas (storage payment tx)</span>
+                    <span className="shrink-0 text-right">
+                      {launchCosts.storagePaid ? "—" : formatSolAmount(launchCosts.gasSol) + " SOL"}
+                      {!launchCosts.storagePaid && (
+                        <span className="block text-xs text-white/40">
+                          ≈ ${launchCosts.gasUsd.toFixed(2)}
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <div className="flex justify-between text-white/70">
                     <span>Crypgo launch fee</span>
                     <span>$0</span>
                   </div>
                   <div className="mt-2 flex justify-between border-t border-white/10 pt-2 font-medium text-white">
-                    <span>Total due at Go Live</span>
+                    <span>Total due from your wallet</span>
                     <span className="shrink-0 text-right">
-                      {formatSolAmount(launchCosts.totalSol)} SOL
-                      <span className="block text-xs font-normal text-white/50">
-                        ≈ ${launchCosts.totalUsd.toFixed(2)}
-                      </span>
+                      {launchCosts.storagePaid
+                        ? "0 SOL (paid)"
+                        : `${formatSolAmount(launchCosts.totalSol)} SOL`}
+                      {!launchCosts.storagePaid && (
+                        <span className="block text-xs font-normal text-white/50">
+                          ≈ ${launchCosts.totalUsd.toFixed(2)}
+                        </span>
+                      )}
                     </span>
                   </div>
                 </div>

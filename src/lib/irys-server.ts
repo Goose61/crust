@@ -7,6 +7,10 @@ import {
   fetchIrysAccountBalanceLamports,
   fetchIrysPriceLamports,
 } from "./irys-shared";
+import {
+  getCollectionArweavePayment,
+  markCollectionIrysFunded,
+} from "./arweave-storage-payment";
 import { getDirectRpcUrl, getSolanaNetwork, isDevnetNetwork } from "./solana-config";
 
 type IrysSigner = {
@@ -99,34 +103,74 @@ function lamportsToSolStr(lamports: bigint): string {
   return (Number(lamports) / 1e9).toFixed(6);
 }
 
+async function waitForIrysBalance(
+  address: string,
+  devnet: boolean,
+  minLamports: bigint,
+  timeoutMs = 45_000,
+): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const balance = await fetchIrysAccountBalanceLamports(address, devnet);
+    if (balance >= minLamports) return true;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return false;
+}
+
 /** Top up the platform Irys account when bundler balance is below the upload price. */
-export async function ensureIrysFundedForBytes(bytesNeeded: number): Promise<void> {
+export async function ensureIrysFundedForBytes(
+  bytesNeeded: number,
+  collectionId?: string,
+): Promise<void> {
   const node = irysNodeUrl();
   const address = await signerAddress();
   const network = getSolanaNetwork();
   const devnet = isDevnetNetwork(network);
   const price = await fetchIrysPriceLamports(bytesNeeded, devnet);
-  const balance = await fetchIrysAccountBalanceLamports(address, devnet);
+  let balance = await fetchIrysAccountBalanceLamports(address, devnet);
   if (balance >= price) return;
 
+  const payment = collectionId ? await getCollectionArweavePayment(collectionId) : null;
+  if (payment?.irysFundSignature) {
+    const credited = await waitForIrysBalance(address, devnet, price);
+    if (credited) return;
+  }
+
   const deficit = price > balance ? price - balance : 0n;
-  const toFund = deficit + deficit / 10n + 1n;
+  let toFund = deficit + deficit / 10n + 1n;
   const bundlerAddress = await fetchBundlerAddress(node);
 
-  const { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SendTransactionError, SystemProgram, Transaction } =
+  const { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } =
     await import("@solana/web3.js");
   const secret = getPlatformSecretKey();
   if (!secret) throw new Error("Missing ARWEAVE_SOLANA_KEY");
   const keypair = Keypair.fromSecretKey(secret);
   const connection = new Connection(getDirectRpcUrl(network), "confirmed");
   const onChainLamports = BigInt(await connection.getBalance(keypair.publicKey));
+  const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(0));
+  const maxTransfer =
+    onChainLamports > rentExempt + TX_FEE_RESERVE_LAMPORTS
+      ? onChainLamports - rentExempt - TX_FEE_RESERVE_LAMPORTS
+      : 0n;
 
-  if (onChainLamports < toFund + TX_FEE_RESERVE_LAMPORTS) {
+  if (maxTransfer <= 0n) {
     throw new Error(
-      `Platform wallet (${address}) has insufficient SOL on ${network} to fund Arweave uploads ` +
-        `(~${lamportsToSolStr(onChainLamports)} SOL available, ~${lamportsToSolStr(toFund + TX_FEE_RESERVE_LAMPORTS)} SOL required). ` +
-        `Your storage payment must reach this wallet on the same network as SOLANA_NETWORK. ` +
-        `If you already paid, confirm Phantom used ${network} and contact support with your payment signature.`,
+      `Platform wallet (${address}) has insufficient SOL on ${network} to fund Irys ` +
+        `(~${lamportsToSolStr(onChainLamports)} SOL on-chain; need rent reserve + tx fee). ` +
+        `Confirm your storage payment used ${network} and matched the Go Live estimate.`,
+    );
+  }
+
+  if (toFund > maxTransfer) {
+    toFund = maxTransfer;
+  }
+
+  if (toFund < deficit) {
+    throw new Error(
+      `Platform wallet (${address}) cannot fund Irys on ${network}: need ~${lamportsToSolStr(deficit)} SOL ` +
+        `but only ~${lamportsToSolStr(maxTransfer)} SOL is transferable after rent reserve. ` +
+        `Re-pay storage using the full Go Live estimate (Irys + buffers + gas).`,
     );
   }
 
@@ -139,29 +183,20 @@ export async function ensureIrysFundedForBytes(bytesNeeded: number): Promise<voi
       lamports: Number(toFund),
     }),
   );
-  tx.sign(keypair);
-
-  const simulation = await connection.simulateTransaction(tx);
-  if (simulation.value.err) {
-    const logs = simulation.value.logs?.join("\n") || "(none)";
-    throw new Error(
-      `Platform Irys fund simulation failed on ${network}: ${JSON.stringify(simulation.value.err)}. ` +
-        `Wallet ${address} balance ~${(Number(onChainLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL. Logs: ${logs}`,
-    );
-  }
 
   let sig: string;
   try {
-    sig = await connection.sendRawTransaction(tx.serialize(), {
+    sig = await connection.sendTransaction(tx, [keypair], {
       skipPreflight: false,
       preflightCommitment: "confirmed",
     });
   } catch (err) {
-    if (err instanceof SendTransactionError) {
-      const logs = err.logs?.join("\n") || "(none)";
-      throw new Error(`Platform Irys fund tx rejected: ${err.message}. Logs: ${logs}`);
-    }
-    throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Platform Irys fund tx failed on ${network}: ${message}. ` +
+        `Wallet ${address} has ~${(Number(onChainLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL; ` +
+        `tried to send ~${(Number(toFund) / LAMPORTS_PER_SOL).toFixed(6)} SOL to Irys.`,
+    );
   }
 
   const confirmation = await connection.confirmTransaction(
@@ -173,6 +208,19 @@ export async function ensureIrysFundedForBytes(bytesNeeded: number): Promise<voi
   }
 
   await submitFundTxToBundler(sig, node);
+  if (collectionId) {
+    await markCollectionIrysFunded(collectionId, sig);
+  }
+
+  balance = await fetchIrysAccountBalanceLamports(address, devnet);
+  if (balance < price) {
+    const credited = await waitForIrysBalance(address, devnet, price);
+    if (!credited) {
+      throw new Error(
+        "Irys bundler balance not credited after fund tx — wait a minute and retry Go Live.",
+      );
+    }
+  }
 }
 
 async function postSignedDataItem(raw: Buffer): Promise<string> {
@@ -222,10 +270,10 @@ async function buildSignedDataItem(
 export async function uploadToArweaveServer(
   data: Buffer,
   contentType: string,
-  opts?: { skipFund?: boolean },
+  opts?: { skipFund?: boolean; collectionId?: string },
 ): Promise<string> {
   if (!opts?.skipFund) {
-    await ensureIrysFundedForBytes(data.length + 512);
+    await ensureIrysFundedForBytes(data.length + 512, opts?.collectionId);
   }
   const { item, id } = await buildSignedDataItem(data, contentType);
   try {

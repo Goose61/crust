@@ -1,17 +1,23 @@
 import { estimateArweaveBytes } from "@/lib/client-asset-store";
 import { fetchStorageEstimate } from "@/lib/client-launch-api";
 import { SOL_USD_FALLBACK } from "@/lib/price-display";
+import type { SolanaNetwork } from "@/lib/solana-config";
 
 export type LaunchCostEstimate = {
   totalBytes: number;
   tokenCount: number;
-  /** Irys quote before payment buffer. */
-  storageSol: number;
-  /** SOL due at Go Live (0 if already paid). Includes +2% payment buffer. */
-  storageSolDue: number;
-  txFeeSol: number;
+  network: SolanaNetwork;
+  /** Irys byte-price quote (before bundler buffer). */
+  irysBaseSol: number;
+  irysBundlerBufferSol: number;
+  irysTotalSol: number;
+  walletBufferSol: number;
+  walletPaymentSol: number;
+  gasSol: number;
   totalSol: number;
-  storageUsd: number;
+  irysBaseUsd: number;
+  walletPaymentUsd: number;
+  gasUsd: number;
   totalUsd: number;
   storagePaid: boolean;
   serverBulkUpload: boolean;
@@ -26,17 +32,24 @@ export async function fetchLaunchCostEstimate(
   const totalBytes = await estimateArweaveBytes(collectionId, tokenCount);
   const est = await fetchStorageEstimate(wallet, collectionId, totalBytes);
   const solUsd = est.solPriceUsd ?? SOL_USD_FALLBACK;
-  const storageSolDue = est.storagePaid ? 0 : est.solWithBuffer;
-  const totalSol = storageSolDue + est.txFeeSol;
+  const walletPaymentSol = est.storagePaid ? 0 : est.walletPaymentSol;
+  const gasSol = est.storagePaid ? 0 : est.gasSol;
+  const totalSol = walletPaymentSol + gasSol;
 
   return {
     totalBytes,
     tokenCount,
-    storageSol: est.sol,
-    storageSolDue,
-    txFeeSol: est.txFeeSol,
+    network: est.network ?? "devnet",
+    irysBaseSol: est.sol,
+    irysBundlerBufferSol: est.irysBundlerBufferSol,
+    irysTotalSol: est.irysTotalSol,
+    walletBufferSol: est.storagePaid ? 0 : est.walletBufferSol,
+    walletPaymentSol,
+    gasSol,
     totalSol,
-    storageUsd: est.sol * solUsd,
+    irysBaseUsd: est.sol * solUsd,
+    walletPaymentUsd: walletPaymentSol * solUsd,
+    gasUsd: gasSol * solUsd,
     totalUsd: totalSol * solUsd,
     storagePaid: !!est.storagePaid,
     serverBulkUpload: !!est.serverBulkUpload,

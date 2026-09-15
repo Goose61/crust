@@ -66,13 +66,14 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (body.logo?.dataBase64) {
       batchBytes += Buffer.from(body.logo.dataBase64, "base64").length + 512;
     }
-    await ensureIrysFundedForBytes(Math.max(batchBytes, 4096));
+    await ensureIrysFundedForBytes(Math.max(batchBytes, 4096), id);
 
     const uploaded: Record<number, { imageUri: string; metadataUri: string }> = {};
     for (const item of items) {
       const imageBuf = Buffer.from(item.imageBase64, "base64");
       const imageUri = await uploadToArweaveServer(imageBuf, item.contentType || "image/png", {
         skipFund: true,
+        collectionId: id,
       });
 
       const meta = JSON.parse(item.metadataJson) as Record<string, unknown>;
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       logoUri,
     });
   } catch (err) {
-    console.error("[POST /api/collections/[id]/arweave-upload v3]", err);
+    console.error("[POST /api/collections/[id]/arweave-upload v4]", err);
     const message = err instanceof Error ? err.message : "Arweave upload failed";
     const status =
       message.includes("Wallet signature required") ||

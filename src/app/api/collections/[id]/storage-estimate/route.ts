@@ -5,14 +5,15 @@ import { fetchIrysPriceLamports } from "@/lib/irys-shared";
 import { isCollectionArweaveStoragePaid, isServerBulkArweaveAvailable } from "@/lib/arweave-storage-payment";
 import { getPlatformPublicKey } from "@/lib/platform-key";
 import { getSolanaNetwork, isDevnetNetwork } from "@/lib/solana-config";
+import {
+  IRYS_BUNDLER_BUFFER_MULTIPLIER,
+  STORAGE_PAYMENT_GAS_SOL,
+  STORAGE_PAYMENT_MULTIPLIER,
+  STORAGE_WALLET_BUFFER_MULTIPLIER,
+} from "@/lib/storage-cost-constants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/** Matches payPlatformForArweaveStorage (+2% headroom). */
-const STORAGE_PAYMENT_BUFFER = 1.02;
-/** One wallet signature to pay for storage at Go Live. */
-const LAUNCH_TX_FEE_SOL = 0.00001;
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -53,15 +54,26 @@ export async function GET(req: NextRequest, { params }: Params) {
       fetchSolPriceUsd(),
     ]);
     const sol = Number(lamports) / 1e9;
-    const solWithBuffer = storagePaid ? 0 : sol * STORAGE_PAYMENT_BUFFER;
-    const totalUpfrontSol = storagePaid ? LAUNCH_TX_FEE_SOL : solWithBuffer + LAUNCH_TX_FEE_SOL;
+    const irysBundlerBufferSol = sol * (IRYS_BUNDLER_BUFFER_MULTIPLIER - 1);
+    const irysTotalSol = sol * IRYS_BUNDLER_BUFFER_MULTIPLIER;
+    const walletBufferSol = storagePaid ? 0 : irysTotalSol * (STORAGE_WALLET_BUFFER_MULTIPLIER - 1);
+    const walletPaymentSol = storagePaid ? 0 : sol * STORAGE_PAYMENT_MULTIPLIER;
+    const gasSol = STORAGE_PAYMENT_GAS_SOL;
+    const totalUpfrontSol = storagePaid ? 0 : walletPaymentSol + gasSol;
 
     return NextResponse.json({
       totalBytes,
       lamports: lamports.toString(),
       sol,
-      solWithBuffer,
-      txFeeSol: LAUNCH_TX_FEE_SOL,
+      irysBundlerBufferSol,
+      irysTotalSol,
+      walletBufferSol,
+      walletPaymentSol,
+      /** @deprecated use walletPaymentSol */
+      solWithBuffer: walletPaymentSol,
+      gasSol,
+      /** @deprecated use gasSol */
+      txFeeSol: gasSol,
       totalUpfrontSol,
       solPriceUsd,
       storageUsd: solPriceUsd != null ? sol * solPriceUsd : null,

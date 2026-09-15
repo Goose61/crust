@@ -173,12 +173,18 @@ export async function fetchStorageEstimate(
 ): Promise<{
   lamports: string;
   sol: number;
+  irysBundlerBufferSol: number;
+  irysTotalSol: number;
+  walletBufferSol: number;
+  walletPaymentSol: number;
+  gasSol: number;
   solWithBuffer: number;
   txFeeSol: number;
   totalUpfrontSol: number;
   solPriceUsd: number | null;
   storageUsd: number | null;
   totalUpfrontUsd: number | null;
+  network?: "devnet" | "mainnet";
   serverBulkUpload?: boolean;
   platformWallet?: string | null;
   storagePaid?: boolean;
@@ -191,29 +197,44 @@ export async function fetchStorageEstimate(
   const data = await readJsonResponse<{
     lamports: string;
     sol: number;
+    irysBundlerBufferSol?: number;
+    irysTotalSol?: number;
+    walletBufferSol?: number;
+    walletPaymentSol?: number;
+    gasSol?: number;
     solWithBuffer?: number;
     txFeeSol?: number;
     totalUpfrontSol?: number;
     solPriceUsd?: number | null;
     storageUsd?: number | null;
     totalUpfrontUsd?: number | null;
+    network?: "devnet" | "mainnet";
     serverBulkUpload?: boolean;
     platformWallet?: string | null;
     storagePaid?: boolean;
     error?: string;
   }>(res);
   if (!res.ok) throw new Error(data.error || "Could not estimate storage");
-  const solWithBuffer = data.solWithBuffer ?? data.sol * 1.02;
-  const txFeeSol = data.txFeeSol ?? 0.00001;
+  const irysTotalSol = data.irysTotalSol ?? data.sol * 1.1;
+  const walletPaymentSol = data.storagePaid
+    ? 0
+    : (data.walletPaymentSol ?? data.solWithBuffer ?? data.sol * 1.122);
+  const gasSol = data.storagePaid ? 0 : (data.gasSol ?? data.txFeeSol ?? 0.00005);
   return {
     lamports: data.lamports,
     sol: data.sol,
-    solWithBuffer: data.storagePaid ? 0 : solWithBuffer,
-    txFeeSol,
-    totalUpfrontSol: data.totalUpfrontSol ?? solWithBuffer + txFeeSol,
+    irysBundlerBufferSol: data.irysBundlerBufferSol ?? data.sol * 0.1,
+    irysTotalSol,
+    walletBufferSol: data.walletBufferSol ?? irysTotalSol * 0.02,
+    walletPaymentSol,
+    gasSol,
+    solWithBuffer: walletPaymentSol,
+    txFeeSol: gasSol,
+    totalUpfrontSol: data.totalUpfrontSol ?? walletPaymentSol + gasSol,
     solPriceUsd: data.solPriceUsd ?? null,
     storageUsd: data.storageUsd ?? null,
     totalUpfrontUsd: data.totalUpfrontUsd ?? null,
+    network: data.network,
     serverBulkUpload: data.serverBulkUpload,
     platformWallet: data.platformWallet,
     storagePaid: data.storagePaid,

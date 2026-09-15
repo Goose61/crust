@@ -8,7 +8,26 @@ type CollectionArweavePayment = {
   signature: string;
   minSol: number;
   paidAt: Date;
+  /** Platform → Irys bundler fund tx (one per collection). */
+  irysFundSignature?: string;
 };
+
+export async function getCollectionArweavePayment(
+  collectionId: string,
+): Promise<CollectionArweavePayment | null> {
+  const db = await getDb();
+  const col = db.collection<CollectionArweavePayment>("collection_arweave_payments");
+  return col.findOne({ collectionId });
+}
+
+export async function markCollectionIrysFunded(
+  collectionId: string,
+  irysFundSignature: string,
+): Promise<void> {
+  const db = await getDb();
+  const col = db.collection<CollectionArweavePayment>("collection_arweave_payments");
+  await col.updateOne({ collectionId }, { $set: { irysFundSignature } });
+}
 
 export function isServerBulkArweaveAvailable(): boolean {
   return !!getPlatformPublicKey();
