@@ -1,24 +1,40 @@
 /**
  * Create a Metaplex Core Collection on-chain at marketplace go-live.
+ * Creator pays Solana fees; platform co-signs as update authority.
  *
  * @see https://www.metaplex.com/docs/smart-contracts/core/collections/create
- * @see https://www.metaplex.com/docs/smart-contracts/core/plugins/royalties
  */
 
 import {
   generateSigner,
   keypairIdentity,
+  createNoopSigner,
+  createSignerFromKeypair,
   publicKey as umiPublicKey,
 } from "@metaplex-foundation/umi";
 import { createCollection, ruleSet } from "@metaplex-foundation/mpl-core";
 import { base64 } from "@metaplex-foundation/umi/serializers";
+import { Keypair, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { createMintUmi, fetchLatestBlockhash } from "./mint-umi";
 import { getDirectRpcUrl, type SolanaNetwork } from "./solana-config";
 import { getPlatformSecretKey } from "./platform-key";
 import { buildCreatorsFromRoyaltySplit } from "./metadata-builders";
-import type { Collection } from "./types";
+import { isValidSolanaAddress, simulateSignedTransaction, simulateUnsignedTransaction } from "./mint-nft";
+import type { Collection, PendingCoreCollection } from "./types";
 import { uploadBlobText } from "./blob-storage";
 import { isServerArweaveUploadAvailable, uploadToArweaveServer } from "./irys-server";
+
+function secretKeyFromB64(b64: string): Uint8Array {
+  const bytes = Buffer.from(b64, "base64");
+  if (bytes.length !== 64) {
+    throw new Error(`Invalid collection secret key length: ${bytes.length}`);
+  }
+  return new Uint8Array(bytes);
+}
+
+function secretKeyToB64(secretKey: Uint8Array): string {
+  return Buffer.from(secretKey).toString("base64");
+}
 
 async function sendTxBase64(rpcUrl: string, txBase64: string): Promise<string> {
   const res = await fetch(rpcUrl, {
@@ -79,34 +95,39 @@ export async function ensureCollectionMetadataUri(collection: Collection): Promi
   return uploadBlobText(`collections/${collection.id}/collection.json`, json);
 }
 
-export type CreateCoreCollectionResult = {
-  address: string;
-  txSignature: string;
+async function buildUnsignedCoreCollectionTx(params: {
+  collection: Collection;
+  network: SolanaNetwork;
   metadataUri: string;
-};
-
-/** Deploy Core Collection with Royalties plugin (inherits to all assets). */
-export async function createMarketplaceCoreCollection(
-  collection: Collection,
-  network: SolanaNetwork,
-): Promise<CreateCoreCollectionResult | null> {
+  payer: string;
+  collectionSecretKey?: Uint8Array;
+}): Promise<{
+  txBase64: string;
+  collectionAddress: string;
+  collectionSecretKey: Uint8Array;
+}> {
   const platformSecret = getPlatformSecretKey();
-  if (!platformSecret) return null;
+  if (!platformSecret) {
+    throw new Error("On-chain collection creation is not configured on this deployment.");
+  }
 
-  const metadataUri = await ensureCollectionMetadataUri(collection);
-  const rpcUrl = getDirectRpcUrl(network);
-  const umi = createMintUmi(network);
-
+  const rpcUrl = getDirectRpcUrl(params.network);
+  const umi = createMintUmi(params.network);
   const authorityKeypair = umi.eddsa.createKeypairFromSecretKey(platformSecret);
+  const authoritySigner = createSignerFromKeypair(umi, authorityKeypair);
   umi.use(keypairIdentity(authorityKeypair, false));
 
-  const collectionSigner = generateSigner(umi);
+  const collectionSigner = params.collectionSecretKey
+    ? createSignerFromKeypair(umi, umi.eddsa.createKeypairFromSecretKey(params.collectionSecretKey))
+    : generateSigner(umi);
+
+  const payer = createNoopSigner(umiPublicKey(params.payer));
   const blockhash = await fetchLatestBlockhash(rpcUrl);
 
   const royaltyCreators = buildCreatorsFromRoyaltySplit(
-    collection.payments.creatorWallet,
-    collection.royaltySplit,
-    collection.royaltyCreators,
+    params.collection.payments.creatorWallet,
+    params.collection.royaltySplit,
+    params.collection.royaltyCreators,
   ).map((c) => ({
     address: umiPublicKey(c.address),
     percentage: c.share,
@@ -117,7 +138,7 @@ export async function createMarketplaceCoreCollection(
       ? [
           {
             type: "Royalties" as const,
-            basisPoints: collection.royaltyBps ?? 500,
+            basisPoints: params.collection.royaltyBps ?? 500,
             creators: royaltyCreators,
             ruleSet: ruleSet("None"),
           },
@@ -126,21 +147,151 @@ export async function createMarketplaceCoreCollection(
 
   const tx = await createCollection(umi, {
     collection: collectionSigner,
-    name: collection.name.slice(0, 32),
-    uri: metadataUri,
+    updateAuthority: authoritySigner.publicKey,
+    payer,
+    name: params.collection.name.slice(0, 32),
+    uri: params.metadataUri,
     ...(plugins ? { plugins } : {}),
   })
     .useV0()
+    .setFeePayer(payer)
     .setBlockhash(blockhash)
-    .buildAndSign(umi);
+    .build(umi);
 
   const serialized = umi.transactions.serialize(tx);
   const txBase64 = base64.deserialize(serialized)[0];
-  const txSignature = await sendTxBase64(rpcUrl, txBase64);
 
   return {
-    address: collectionSigner.publicKey.toString(),
-    txSignature,
-    metadataUri,
+    txBase64,
+    collectionAddress: collectionSigner.publicKey.toString(),
+    collectionSecretKey: collectionSigner.secretKey,
   };
+}
+
+function signatureIsPresent(sig: Uint8Array | null | undefined): boolean {
+  return Boolean(sig && sig.length > 0 && !sig.every((b) => b === 0));
+}
+
+function assertUserSignedCoreCollectionTx(
+  tx: VersionedTransaction,
+  pending: PendingCoreCollection,
+): void {
+  const keys = tx.message.staticAccountKeys;
+  if (keys.length === 0) {
+    throw new Error("Signed transaction has no accounts.");
+  }
+
+  if (keys[0].toBase58() !== pending.payer) {
+    throw new Error("Transaction fee payer does not match your connected wallet.");
+  }
+
+  const collectionPk = new PublicKey(pending.collectionAddress);
+  if (!keys.some((k) => k.equals(collectionPk))) {
+    throw new Error("Transaction does not include the expected Core collection address.");
+  }
+
+  if (!signatureIsPresent(tx.signatures[0])) {
+    throw new Error("Transaction is missing your wallet signature.");
+  }
+}
+
+export async function prepareCoreCollectionTransaction(params: {
+  collection: Collection;
+  payer: string;
+  network: SolanaNetwork;
+}): Promise<{
+  txBase64: string;
+  collectionAddress: string;
+  metadataUri: string;
+  pendingCoreCollection: PendingCoreCollection;
+}> {
+  if (!isValidSolanaAddress(params.payer)) {
+    throw new Error("Valid creator wallet required.");
+  }
+
+  let pending = params.collection.pendingCoreCollection;
+  if (
+    !pending ||
+    pending.payer !== params.payer ||
+    !pending.collectionSecretKeyB64
+  ) {
+    const metadataUri = await ensureCollectionMetadataUri(params.collection);
+    const built = await buildUnsignedCoreCollectionTx({
+      collection: params.collection,
+      network: params.network,
+      metadataUri,
+      payer: params.payer,
+    });
+    pending = {
+      collectionSecretKeyB64: secretKeyToB64(built.collectionSecretKey),
+      collectionAddress: built.collectionAddress,
+      metadataUri,
+      payer: params.payer,
+    };
+  }
+
+  if (!pending.collectionSecretKeyB64) {
+    throw new Error("Pending Core collection key missing — prepare again.");
+  }
+
+  const built = await buildUnsignedCoreCollectionTx({
+    collection: params.collection,
+    network: params.network,
+    metadataUri: pending.metadataUri,
+    payer: params.payer,
+    collectionSecretKey: secretKeyFromB64(pending.collectionSecretKeyB64),
+  });
+
+  if (built.collectionAddress !== pending.collectionAddress) {
+    throw new Error("Core collection address mismatch when refreshing transaction.");
+  }
+
+  await simulateUnsignedTransaction(built.txBase64, params.network);
+
+  return {
+    txBase64: built.txBase64,
+    collectionAddress: pending.collectionAddress,
+    metadataUri: pending.metadataUri,
+    pendingCoreCollection: {
+      ...pending,
+      preparedTxBase64: built.txBase64,
+    },
+  };
+}
+
+export async function cosignAndSubmitCoreCollectionTransaction(params: {
+  userSignedTxBase64: string;
+  pending: PendingCoreCollection;
+  network: SolanaNetwork;
+}): Promise<string> {
+  const platformSecret = getPlatformSecretKey();
+  if (!platformSecret) {
+    throw new Error("On-chain collection creation is not configured on this deployment.");
+  }
+  if (!params.pending.collectionSecretKeyB64) {
+    throw new Error("Missing pending Core collection key — prepare the transaction again.");
+  }
+
+  const rpcUrl = getDirectRpcUrl(params.network);
+  const tx = VersionedTransaction.deserialize(
+    Buffer.from(params.userSignedTxBase64, "base64"),
+  );
+
+  assertUserSignedCoreCollectionTx(tx, params.pending);
+
+  const collectionKp = Keypair.fromSecretKey(
+    secretKeyFromB64(params.pending.collectionSecretKeyB64),
+  );
+  const platformKp = Keypair.fromSecretKey(platformSecret);
+
+  if (collectionKp.publicKey.toBase58() !== params.pending.collectionAddress) {
+    throw new Error("Pending collection key does not match stored address.");
+  }
+
+  tx.sign([platformKp, collectionKp]);
+
+  await simulateSignedTransaction(tx, params.network);
+
+  const txBase64 = Buffer.from(tx.serialize()).toString("base64");
+  return sendTxBase64(rpcUrl, txBase64);
 }

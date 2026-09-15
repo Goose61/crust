@@ -51,7 +51,7 @@ import {
   uploadCollectionViaServer,
   uploadCollectionWithPhantom,
 } from "@/lib/irys-client";
-import { getClientNetwork } from "@/lib/solana-config";
+import { explorerClusterQuery, getClientNetwork } from "@/lib/solana-config";
 import {
   CollectionUploadProgressOverlay,
   type CollectionUploadProgressState,
@@ -244,7 +244,7 @@ function PriceUnitToggle({
 
 export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const router = useRouter();
-  const { publicKey, connect } = useWallet();
+  const { publicKey, connect, signCoreCollectionTx } = useWallet();
 
   const [mode, setMode] = useState<Mode>(null);
   const [step, setStep] = useState(0);
@@ -1375,9 +1375,28 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         });
       }
 
-      setGoLivePhase("Creating on-chain collection…");
+      let coreCollectionAddress = current.coreCollectionAddress;
+      let coreCollectionTxUrl = current.coreCollectionTxUrl;
+      if (!coreCollectionAddress) {
+        setGoLivePhase("Creating on-chain collection — approve in your wallet…");
+        const core = await signCoreCollectionTx(current.id, network);
+        coreCollectionAddress = core.collectionAddress;
+        if (core.txSignature) {
+          coreCollectionTxUrl = `https://explorer.solana.com/tx/${core.txSignature}${explorerClusterQuery(network)}`;
+        }
+      }
+
+      setGoLivePhase("Finalizing launch…");
       current =
-        (await save({ fees: { ...current.fees, locked: true } }, "go-live", current)) ?? current;
+        (await save(
+          {
+            fees: { ...current.fees, locked: true },
+            coreCollectionAddress,
+            coreCollectionTxUrl,
+          },
+          "go-live",
+          current,
+        )) ?? current;
       router.push(`/collection/${current.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Go live failed");

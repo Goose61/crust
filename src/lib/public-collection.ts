@@ -1,4 +1,4 @@
-import type { Collection, PendingMint } from "./types";
+import type { Collection, PendingCoreCollection, PendingMint } from "./types";
 
 export function isListedPublicly(collection: Collection): boolean {
   return collection.status === "live" || collection.status === "sold_out";
@@ -14,13 +14,22 @@ function toPublicPendingMint(pendingMint: PendingMint): PendingMint {
   return rest;
 }
 
+function toPublicPendingCoreCollection(pending: PendingCoreCollection): PendingCoreCollection {
+  const { collectionSecretKeyB64: _secret, ...rest } = pending;
+  void _secret;
+  return rest;
+}
+
 /** Strip server-only fields before any collection leaves the process. */
 export function toPublicCollection(collection: Collection): Collection {
-  const { pendingZipUrl: _zip, pendingMint, ...rest } = collection;
+  const { pendingZipUrl: _zip, pendingMint, pendingCoreCollection, ...rest } = collection;
   void _zip;
   return {
     ...rest,
     ...(pendingMint ? { pendingMint: toPublicPendingMint(pendingMint) } : {}),
+    ...(pendingCoreCollection
+      ? { pendingCoreCollection: toPublicPendingCoreCollection(pendingCoreCollection) }
+      : {}),
   };
 }
 

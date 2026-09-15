@@ -282,7 +282,7 @@ function assertUserSignedGiftMintTx(
   // Wallet modified the tx (e.g. compute budget) — relaxed checks above are sufficient.
 }
 
-async function simulateSignedTransaction(
+export async function simulateSignedTransaction(
   tx: VersionedTransaction,
   network: SolanaNetwork,
 ): Promise<void> {

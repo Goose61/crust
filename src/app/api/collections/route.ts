@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCollection, listCollections, saveCollection, slugify } from "@/lib/store";
-import { getPlatformSecretKey } from "@/lib/platform-key";
-import { explorerClusterQuery, getSolanaNetwork } from "@/lib/solana-config";
 import { rateLimit } from "@/lib/rate-limit";
 import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
 import { filterCollectionsForViewer, toPublicCollection } from "@/lib/public-collection";
@@ -149,33 +147,14 @@ export async function POST(req: NextRequest) {
     if (!merged.fees.locked) merged.fees = { ...merged.fees, locked: true };
     merged.publicMintOpen = merged.allowlist.length === 0;
 
-    const network = getSolanaNetwork();
-    if (!merged.coreCollectionAddress && getPlatformSecretKey()) {
-      try {
-        const { refreshCollectionMetadata } = await import("@/lib/metadata-refresh");
-        const { createMarketplaceCoreCollection } = await import("@/lib/create-core-collection");
-        const withMeta =
-          merged.tokens.some((t) => t.metadataUri?.startsWith("http"))
-            ? merged
-            : await refreshCollectionMetadata(merged);
-        merged.tokens = withMeta.tokens;
-        const core = await createMarketplaceCoreCollection(merged, network);
-        if (!core) {
-          return NextResponse.json(
-            { error: "On-chain collection was not created" },
-            { status: 502 },
-          );
-        }
-        merged.coreCollectionAddress = core.address;
-        merged.coreCollectionTxUrl = `https://explorer.solana.com/tx/${core.txSignature}${explorerClusterQuery(network)}`;
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Core collection creation failed";
-        console.error("[go-live] Core collection creation failed:", e);
-        return NextResponse.json(
-          { error: `On-chain collection failed: ${message}` },
-          { status: 502 },
-        );
-      }
+    if (!merged.coreCollectionAddress) {
+      return NextResponse.json(
+        {
+          error:
+            "On-chain Core collection not created yet. Approve the collection transaction in your wallet, then try again.",
+        },
+        { status: 400 },
+      );
     }
     merged.status = "live";
   }

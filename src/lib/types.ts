@@ -178,6 +178,16 @@ export type PendingMint = {
   preparedTxBase64?: string;
 };
 
+/** Co-sign data for marketplace Core collection creation at go-live. */
+export type PendingCoreCollection = {
+  /** Server-only; stripped from public API responses. */
+  collectionSecretKeyB64?: string;
+  collectionAddress: string;
+  metadataUri: string;
+  payer: string;
+  preparedTxBase64?: string;
+};
+
 export type CollectionSocials = {
   twitter?: string;
   discord?: string;
@@ -315,6 +325,8 @@ export type Collection = {
   feeLedger?: FeeLedger;
   /** Ephemeral asset keypair for Phantom-first multi-signer mint flow */
   pendingMint?: PendingMint;
+  /** Ephemeral collection keypair for creator-paid Core collection go-live. */
+  pendingCoreCollection?: PendingCoreCollection;
   /** Blob URL awaiting /api/import/images/process (cleared when import finishes). Never returned on APIs. */
   pendingZipUrl?: string;
   /** Populated while a large ZIP import runs in the background. */

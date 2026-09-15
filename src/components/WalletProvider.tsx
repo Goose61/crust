@@ -5,6 +5,7 @@ import { useConnection, useWallet as useAdapterWallet } from "@solana/wallet-ada
 import { readJsonResponse } from "@/lib/fetch-json";
 import { WalletConnectModal } from "@/components/WalletConnectModal";
 import { setActiveWallet } from "@/lib/wallet-session";
+import { buildAuthHeaders } from "@/lib/wallet-auth-client";
 import { getRpcUrl, getSolanaNetwork, isDevnetNetwork } from "@/lib/solana-config";
 
 type WalletCtx = {
@@ -18,6 +19,11 @@ type WalletCtx = {
    * signTransaction → server co-sign → submit.
    */
   signMintTx: (collectionId: string, network?: string) => Promise<string>;
+  /** Creator-paid Core collection creation at marketplace go-live. */
+  signCoreCollectionTx: (
+    collectionId: string,
+    network?: string,
+  ) => Promise<{ txSignature: string; collectionAddress: string }>;
   /** @deprecated Use signMintTx for gift mints (wallet-first signing order). */
   signAndSendTx: (txBase64: string) => Promise<string>;
 };
@@ -29,6 +35,9 @@ const Ctx = createContext<WalletCtx>({
   connect: async () => {},
   disconnect: () => {},
   signMintTx: async () => {
+    throw new Error("Wallet not connected");
+  },
+  signCoreCollectionTx: async () => {
     throw new Error("Wallet not connected");
   },
   signAndSendTx: async () => {
@@ -147,6 +156,67 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [publicKey, signTransaction],
   );
 
+  const signCoreCollectionTx = useCallback(
+    async (
+      collectionId: string,
+      network?: string,
+    ): Promise<{ txSignature: string; collectionAddress: string }> => {
+      if (!publicKey) throw new Error("Wallet not connected.");
+      if (!signTransaction) {
+        throw new Error("This wallet cannot sign transactions. Try Phantom, Solflare, Backpack, or MetaMask.");
+      }
+
+      const net = network ?? getSolanaNetwork();
+      const authHeaders = await buildAuthHeaders(publicKey);
+      const prep = await fetch(`/api/collections/${collectionId}/core-collection/prepare-sign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ network: net }),
+      });
+      const prepData = await readJsonResponse<{
+        txBase64?: string;
+        collectionAddress?: string;
+        alreadyCreated?: boolean;
+        error?: string;
+      }>(prep);
+      if (!prep.ok) {
+        throw new Error(prepData.error ?? "Failed to prepare Core collection transaction");
+      }
+      if (prepData.alreadyCreated && prepData.collectionAddress) {
+        return { txSignature: "", collectionAddress: prepData.collectionAddress };
+      }
+      if (!prepData.txBase64 || !prepData.collectionAddress) {
+        throw new Error("Failed to prepare Core collection transaction");
+      }
+
+      const { VersionedTransaction } = await import("@solana/web3.js");
+      const tx = VersionedTransaction.deserialize(Buffer.from(prepData.txBase64, "base64"));
+      const signed = (await signTransaction(tx)) as InstanceType<typeof VersionedTransaction>;
+      const signedB64 = Buffer.from(signed.serialize()).toString("base64");
+
+      const res = await fetch(`/api/collections/${collectionId}/core-collection/cosign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({
+          signedTxBase64: signedB64,
+          preparedTxBase64: prepData.txBase64,
+          network: net,
+        }),
+      });
+      const data = await readJsonResponse<{
+        txSignature?: string;
+        collectionAddress?: string;
+        error?: string;
+      }>(res);
+      if (!res.ok) throw new Error(data.error ?? "Core collection co-sign failed");
+      if (!data.txSignature || !data.collectionAddress) {
+        throw new Error("No transaction signature returned");
+      }
+      return { txSignature: data.txSignature, collectionAddress: data.collectionAddress };
+    },
+    [publicKey, signTransaction],
+  );
+
   const signAndSendTx = useCallback(
     async (txBase64: string): Promise<string> => {
       if (!sendTransaction) throw new Error("Connect a wallet to continue.");
@@ -171,9 +241,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       connect,
       disconnect,
       signMintTx,
+      signCoreCollectionTx,
       signAndSendTx,
     }),
-    [publicKey, adapterConnecting, connected, connect, disconnect, signMintTx, signAndSendTx],
+    [publicKey, adapterConnecting, connected, connect, disconnect, signMintTx, signCoreCollectionTx, signAndSendTx],
   );
 
   return (
