@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCollection } from "@/lib/store";
 import { assertCreatorAuth, requireWalletAuth } from "@/lib/wallet-auth";
 import { fetchIrysPriceLamports } from "@/lib/irys-shared";
+import { isServerBulkArweaveAvailable } from "@/lib/arweave-storage-payment";
+import { getPlatformPublicKey } from "@/lib/platform-key";
 import { getSolanaNetwork, isDevnetNetwork } from "@/lib/solana-config";
 import {
   IRYS_BUNDLER_BUFFER_MULTIPLIER,
@@ -75,6 +77,9 @@ export async function GET(req: NextRequest, { params }: Params) {
       totalUpfrontUsd: solPriceUsd != null ? totalUpfrontSol * solPriceUsd : null,
       network,
       creatorPaysIrys: true,
+      serverBulkUpload: isServerBulkArweaveAvailable(),
+      /** Server uploader pubkey — creator grants a one-time Irys spend approval (not a SOL transfer). */
+      uploadDelegateAddress: getPlatformPublicKey(),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Estimate failed";

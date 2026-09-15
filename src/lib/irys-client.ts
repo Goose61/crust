@@ -256,10 +256,21 @@ type IrysInstance = {
   ) => Promise<{ id: string }>;
 };
 
+type PhantomIrysClient = IrysInstance & {
+  approval: {
+    getApproval: (opts: { approvedAddress: string }) => Promise<{ amount: string }>;
+    createApproval: (opts: {
+      approvedAddress: string;
+      amount: string | number | bigint;
+      expiresInSeconds?: number;
+    }) => Promise<{ id: string }>;
+  };
+};
+
 /** Create an Irys uploader wired to the connected Phantom wallet. */
 export async function createPhantomIrysUploader(
   network: SolanaNetwork,
-): Promise<IrysInstance> {
+): Promise<PhantomIrysClient> {
   const phantom = getPhantomProvider();
   if (!phantom) throw new Error("A Solana wallet is required. Connect Phantom, Solflare, Backpack, or MetaMask.");
 
@@ -277,7 +288,64 @@ export async function createPhantomIrysUploader(
     .withRpc(rpcUrl)
     .withTokenOptions({ finality: "confirmed" });
 
-  return (devnet ? await builder.devnet().build() : await builder.mainnet().build()) as IrysInstance;
+  return (devnet ? await builder.devnet().build() : await builder.mainnet().build()) as PhantomIrysClient;
+}
+
+/** Fund the creator's Irys account in one wallet transaction (SOL → Irys bundler). */
+export async function fundCreatorIrysForBytes(params: {
+  network: SolanaNetwork;
+  totalBytes: number;
+  onFundNeeded?: () => void;
+}): Promise<void> {
+  const phantom = getPhantomProvider();
+  if (!phantom?.publicKey) throw new Error("Connect a wallet first.");
+
+  const irys = await createPhantomIrysUploader(params.network);
+  const confirmRpc = getRpcUrl(params.network);
+  const devnet = isDevnetNetwork(params.network);
+  const price = await irys.getPrice(params.totalBytes);
+  const balance = await irys.getBalance();
+  if (!balance.lt(price)) return;
+
+  const priceBn = BigInt(price.toString());
+  const balanceBn = BigInt(balance.toString());
+  const deficit = priceBn > balanceBn ? priceBn - balanceBn : 0n;
+  const toFund = deficit + deficit / 10n + 1n;
+  params.onFundNeeded?.();
+  await fundIrysAccount({
+    amountLamports: toFund,
+    phantom,
+    rpcUrl: confirmRpc,
+    devnet,
+    network: params.network,
+  });
+}
+
+/**
+ * One-time Irys spend approval so the server can bulk-upload without per-file wallet popups.
+ * Creator still pays — charges come from the creator's Irys balance, not a platform SOL wallet.
+ */
+export async function ensureCreatorIrysUploadDelegate(params: {
+  network: SolanaNetwork;
+  delegateAddress: string;
+  totalBytes: number;
+  onSign?: () => void;
+}): Promise<void> {
+  const irys: PhantomIrysClient = await createPhantomIrysUploader(params.network);
+  const price = await irys.getPrice(params.totalBytes);
+  const amount = BigInt(price.toString()) + BigInt(price.toString()) / 10n + 1n;
+
+  const existing = await irys.approval.getApproval({
+    approvedAddress: params.delegateAddress,
+  });
+  if (BigInt(existing.amount ?? "0") >= amount) return;
+
+  params.onSign?.();
+  await irys.approval.createApproval({
+    approvedAddress: params.delegateAddress,
+    amount: amount.toString(),
+    expiresInSeconds: 7 * 24 * 60 * 60,
+  });
 }
 
 async function ensureFunded(
@@ -540,15 +608,13 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 export const ARWEAVE_SERVER_BATCH_SIZE = 8;
 
-/** Bulk upload via server Irys wallet — one storage payment, no per-file wallet signatures. */
+/** Bulk upload via server — creator-funded Irys balance, no per-file wallet signatures. */
 export async function uploadCollectionViaServer(params: {
   collectionId: string;
   wallet: string;
   tokens: CollectionUploadToken[];
   logoBytes?: Uint8Array;
   logoContentType?: string;
-  paymentSignature?: string;
-  minSol: number;
   /** Called before each batch so auth stays fresh during long uploads. */
   getAuthHeaders: () => Promise<Record<string, string>>;
   existingProgress?: Record<number, { imageUri: string; metadataUri: string }>;
@@ -566,7 +632,6 @@ export async function uploadCollectionViaServer(params: {
   const totalSteps =
     pending.length * 2 + (params.logoBytes && !logoUri ? 1 : 0);
   let done = Object.keys(completed).length * 2 + (logoUri ? 1 : 0);
-  let sentPayment = false;
 
   for (let i = 0; i < pending.length; i += ARWEAVE_SERVER_BATCH_SIZE) {
     const slice = pending.slice(i, i + ARWEAVE_SERVER_BATCH_SIZE);
@@ -587,8 +652,6 @@ export async function uploadCollectionViaServer(params: {
         ...authHeaders,
       },
       body: JSON.stringify({
-        minSol: params.minSol,
-        paymentSignature: sentPayment ? undefined : params.paymentSignature,
         items: slice.map((token) => ({
           tokenId: token.tokenId,
           imageBase64: bytesToBase64(token.imageBytes),
@@ -603,7 +666,6 @@ export async function uploadCollectionViaServer(params: {
       tokens?: Record<number, { imageUri: string; metadataUri: string }>;
     };
     if (!res.ok) throw new Error(data.error || "Server Arweave upload failed");
-    sentPayment = true;
 
     for (const token of slice) {
       const row = data.tokens?.[token.tokenId];
@@ -629,7 +691,6 @@ export async function uploadCollectionViaServer(params: {
         ...logoAuthHeaders,
       },
       body: JSON.stringify({
-        minSol: params.minSol,
         logo: {
           dataBase64: bytesToBase64(params.logoBytes),
           contentType: params.logoContentType ?? "image/png",

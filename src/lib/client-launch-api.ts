@@ -186,6 +186,8 @@ export async function fetchStorageEstimate(
   totalUpfrontUsd: number | null;
   network?: "devnet" | "mainnet";
   creatorPaysIrys?: boolean;
+  serverBulkUpload?: boolean;
+  uploadDelegateAddress?: string | null;
 }> {
   const headers = authHeaders ?? (await buildAuthHeaders(wallet));
   const res = await fetch(
@@ -208,6 +210,8 @@ export async function fetchStorageEstimate(
     totalUpfrontUsd?: number | null;
     network?: "devnet" | "mainnet";
     creatorPaysIrys?: boolean;
+    serverBulkUpload?: boolean;
+    uploadDelegateAddress?: string | null;
     error?: string;
   }>(res);
   if (!res.ok) throw new Error(data.error || "Could not estimate storage");
@@ -230,5 +234,7 @@ export async function fetchStorageEstimate(
     totalUpfrontUsd: data.totalUpfrontUsd ?? null,
     network: data.network,
     creatorPaysIrys: data.creatorPaysIrys ?? true,
+    serverBulkUpload: data.serverBulkUpload,
+    uploadDelegateAddress: data.uploadDelegateAddress ?? null,
   };
 }

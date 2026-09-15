@@ -45,7 +45,12 @@ import {
   importTokenBatch,
   TOKEN_IMPORT_BATCH_SIZE,
 } from "@/lib/client-launch-api";
-import { uploadCollectionWithPhantom } from "@/lib/irys-client";
+import {
+  ensureCreatorIrysUploadDelegate,
+  fundCreatorIrysForBytes,
+  uploadCollectionViaServer,
+  uploadCollectionWithPhantom,
+} from "@/lib/irys-client";
 import { getClientNetwork } from "@/lib/solana-config";
 import {
   CollectionUploadProgressOverlay,
@@ -1199,9 +1204,10 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       }
       const network = serverNetwork;
 
-      setGoLivePhase(
-        `Funding Arweave storage (~${estimate.walletPaymentSol.toFixed(4)} SOL to Irys) — approve in your wallet…`,
-      );
+      const useServerBulk =
+        estimate.serverBulkUpload &&
+        estimate.uploadDelegateAddress &&
+        tokenList.length > 1;
 
       const uploadTokens = [];
       for (const token of tokenList) {
@@ -1233,33 +1239,81 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         logoBytes = new Uint8Array(logoAsset.data);
       }
 
+      if (useServerBulk) {
+        setGoLivePhase(
+          `Step 1/2 — Fund Irys (~${estimate.walletPaymentSol.toFixed(4)} SOL) from your wallet…`,
+        );
+        await fundCreatorIrysForBytes({
+          network,
+          totalBytes,
+          onFundNeeded: () => {
+            setGoLivePhase("Approve Irys storage funding in your wallet…");
+          },
+        });
+        setGoLivePhase("Step 2/2 — Authorize bulk upload (one signature, no per-file approvals)…");
+        await ensureCreatorIrysUploadDelegate({
+          network,
+          delegateAddress: estimate.uploadDelegateAddress!,
+          totalBytes,
+          onSign: () => {
+            setGoLivePhase("Approve upload authorization in your wallet…");
+          },
+        });
+      } else {
+        setGoLivePhase(
+          `Funding Arweave storage (~${estimate.walletPaymentSol.toFixed(4)} SOL to Irys) — approve in your wallet…`,
+        );
+      }
+
       setGoLivePhase("Uploading to Arweave — keep this tab open…");
 
-      const uploaded = await uploadCollectionWithPhantom({
-        collectionId: current.id,
-        tokens: uploadTokens,
-        logoBytes,
-        logoContentType: logoAsset?.contentType,
-        network,
-        existingProgress: existingProgress?.completed,
-        existingLogoUri: existingProgress?.logoUri,
-        onFundNeeded: () => {
-          setGoLivePhase("Approve Irys storage payment in your wallet…");
-        },
-        onProgress: (p) => {
-          if (p.phase === "funding") {
-            setGoLivePhase("Approve Irys storage payment in your wallet…");
-          } else if (p.phase === "uploading-logo") {
-            setArweaveUploadDetail("Uploading logo…");
-          } else {
-            setArweaveUploadDetail(
-              p.tokenId != null
-                ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
-                : `${p.done} / ${p.total} uploads`,
-            );
-          }
-        },
-      });
+      const uploaded = useServerBulk
+        ? await uploadCollectionViaServer({
+            collectionId: current.id,
+            wallet: publicKey,
+            tokens: uploadTokens,
+            logoBytes,
+            logoContentType: logoAsset?.contentType,
+            getAuthHeaders: () => buildAuthHeaders(publicKey),
+            existingProgress: existingProgress?.completed,
+            existingLogoUri: existingProgress?.logoUri,
+            onProgress: (p) => {
+              if (p.phase === "uploading-logo") {
+                setArweaveUploadDetail("Uploading logo…");
+              } else {
+                setArweaveUploadDetail(
+                  p.tokenId != null
+                    ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
+                    : `${p.done} / ${p.total} uploads`,
+                );
+              }
+            },
+          })
+        : await uploadCollectionWithPhantom({
+            collectionId: current.id,
+            tokens: uploadTokens,
+            logoBytes,
+            logoContentType: logoAsset?.contentType,
+            network,
+            existingProgress: existingProgress?.completed,
+            existingLogoUri: existingProgress?.logoUri,
+            onFundNeeded: () => {
+              setGoLivePhase("Approve Irys storage payment in your wallet…");
+            },
+            onProgress: (p) => {
+              if (p.phase === "funding") {
+                setGoLivePhase("Approve Irys storage payment in your wallet…");
+              } else if (p.phase === "uploading-logo") {
+                setArweaveUploadDetail("Uploading logo…");
+              } else {
+                setArweaveUploadDetail(
+                  p.tokenId != null
+                    ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
+                    : `${p.done} / ${p.total} uploads`,
+                );
+              }
+            },
+          });
 
       await saveUploadProgress(current.id, {
         completed: uploaded.tokens,
@@ -2735,9 +2789,9 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 </div>
               ) : null}
               <p className="mt-3 text-[11px] text-white/35">
-                You fund Irys directly from your wallet — no platform wallet involved. Resuming only
-                charges any remaining Irys balance. Keep this tab open until upload finishes (large
-                collections can take over an hour).
+                You fund Irys directly from your wallet — no SOL goes to a platform wallet. Large
+                collections: one funding tx + one upload authorization, then the server bulk-uploads
+                with no per-file wallet popups. Keep this tab open until upload finishes.
                 No Crypgo launch fee — marketplace takes {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint (
                 {PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax) and{" "}
                 {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales only.

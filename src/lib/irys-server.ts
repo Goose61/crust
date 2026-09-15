@@ -236,11 +236,17 @@ export async function ensureIrysFundedForBytes(
   }
 }
 
-async function postSignedDataItem(raw: Buffer, network?: SolanaNetwork): Promise<string> {
+async function postSignedDataItem(
+  raw: Buffer,
+  network?: SolanaNetwork,
+  paidBy?: string,
+): Promise<string> {
   const node = irysNodeUrl(network);
+  const headers: Record<string, string> = { "Content-Type": "application/octet-stream" };
+  if (paidBy) headers["x-irys-paid-by"] = paidBy;
   const res = await fetch(`${node}/tx/solana`, {
     method: "POST",
-    headers: { "Content-Type": "application/octet-stream" },
+    headers,
     body: new Uint8Array(raw),
   });
 
@@ -283,18 +289,18 @@ async function buildSignedDataItem(
 export async function uploadToArweaveServer(
   data: Buffer,
   contentType: string,
-  opts?: { skipFund?: boolean; collectionId?: string },
+  opts?: { skipFund?: boolean; collectionId?: string; paidBy?: string },
 ): Promise<string> {
   const network = opts?.collectionId
     ? await resolveUploadNetwork(opts.collectionId)
     : getSolanaNetwork();
 
-  if (!opts?.skipFund) {
+  if (!opts?.skipFund && !opts?.paidBy) {
     await ensureIrysFundedForBytes(data.length + 512, opts?.collectionId);
   }
   const { item, id } = await buildSignedDataItem(data, contentType);
   try {
-    const postedId = await postSignedDataItem(item.getRaw(), network);
+    const postedId = await postSignedDataItem(item.getRaw(), network, opts?.paidBy);
     return `${IRYS_GATEWAY}/${postedId || id}`;
   } catch (err) {
     if (id) return `${IRYS_GATEWAY}/${id}`;
