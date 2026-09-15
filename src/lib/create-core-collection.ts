@@ -264,10 +264,6 @@ export async function cosignAndSubmitCoreCollectionTransaction(params: {
   pending: PendingCoreCollection;
   network: SolanaNetwork;
 }): Promise<string> {
-  const platformSecret = getPlatformSecretKey();
-  if (!platformSecret) {
-    throw new Error("On-chain collection creation is not configured on this deployment.");
-  }
   if (!params.pending.collectionSecretKeyB64) {
     throw new Error("Missing pending Core collection key — prepare the transaction again.");
   }
@@ -282,13 +278,13 @@ export async function cosignAndSubmitCoreCollectionTransaction(params: {
   const collectionKp = Keypair.fromSecretKey(
     secretKeyFromB64(params.pending.collectionSecretKeyB64),
   );
-  const platformKp = Keypair.fromSecretKey(platformSecret);
 
   if (collectionKp.publicKey.toBase58() !== params.pending.collectionAddress) {
     throw new Error("Pending collection key does not match stored address.");
   }
 
-  tx.sign([platformKp, collectionKp]);
+  // Only the new collection account signs — updateAuthority is a pubkey, not a signer.
+  tx.sign([collectionKp]);
 
   await simulateSignedTransaction(tx, params.network);
 
