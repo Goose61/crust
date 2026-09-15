@@ -2,14 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCollection } from "@/lib/store";
 import { assertCreatorAuth, requireWalletAuth } from "@/lib/wallet-auth";
 import { fetchIrysPriceLamports } from "@/lib/irys-shared";
-import { isCollectionArweaveStoragePaid, isServerBulkArweaveAvailable } from "@/lib/arweave-storage-payment";
-import { getPlatformPublicKey } from "@/lib/platform-key";
 import { getSolanaNetwork, isDevnetNetwork } from "@/lib/solana-config";
 import {
   IRYS_BUNDLER_BUFFER_MULTIPLIER,
   STORAGE_PAYMENT_GAS_SOL,
-  STORAGE_PAYMENT_MULTIPLIER,
-  STORAGE_WALLET_BUFFER_MULTIPLIER,
 } from "@/lib/storage-cost-constants";
 
 export const runtime = "nodejs";
@@ -48,18 +44,17 @@ export async function GET(req: NextRequest, { params }: Params) {
 
     const network = getSolanaNetwork();
     const devnet = isDevnetNetwork(network);
-    const [lamports, storagePaid, solPriceUsd] = await Promise.all([
+    const [lamports, solPriceUsd] = await Promise.all([
       fetchIrysPriceLamports(totalBytes, devnet),
-      isCollectionArweaveStoragePaid(id),
       fetchSolPriceUsd(),
     ]);
     const sol = Number(lamports) / 1e9;
     const irysBundlerBufferSol = sol * (IRYS_BUNDLER_BUFFER_MULTIPLIER - 1);
     const irysTotalSol = sol * IRYS_BUNDLER_BUFFER_MULTIPLIER;
-    const walletBufferSol = storagePaid ? 0 : irysTotalSol * (STORAGE_WALLET_BUFFER_MULTIPLIER - 1);
-    const walletPaymentSol = storagePaid ? 0 : sol * STORAGE_PAYMENT_MULTIPLIER;
+    /** Creator funds Irys directly from their wallet (no platform wallet). */
+    const walletPaymentSol = irysTotalSol;
     const gasSol = STORAGE_PAYMENT_GAS_SOL;
-    const totalUpfrontSol = storagePaid ? 0 : walletPaymentSol + gasSol;
+    const totalUpfrontSol = walletPaymentSol + gasSol;
 
     return NextResponse.json({
       totalBytes,
@@ -67,7 +62,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       sol,
       irysBundlerBufferSol,
       irysTotalSol,
-      walletBufferSol,
+      walletBufferSol: 0,
       walletPaymentSol,
       /** @deprecated use walletPaymentSol */
       solWithBuffer: walletPaymentSol,
@@ -79,9 +74,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       storageUsd: solPriceUsd != null ? sol * solPriceUsd : null,
       totalUpfrontUsd: solPriceUsd != null ? totalUpfrontSol * solPriceUsd : null,
       network,
-      serverBulkUpload: isServerBulkArweaveAvailable(),
-      platformWallet: getPlatformPublicKey(),
-      storagePaid,
+      creatorPaysIrys: true,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Estimate failed";

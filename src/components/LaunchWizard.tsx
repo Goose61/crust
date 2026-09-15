@@ -45,11 +45,7 @@ import {
   importTokenBatch,
   TOKEN_IMPORT_BATCH_SIZE,
 } from "@/lib/client-launch-api";
-import {
-  uploadCollectionWithPhantom,
-  uploadCollectionViaServer,
-  payPlatformForArweaveStorage,
-} from "@/lib/irys-client";
+import { uploadCollectionWithPhantom } from "@/lib/irys-client";
 import { getClientNetwork } from "@/lib/solana-config";
 import {
   CollectionUploadProgressOverlay,
@@ -1193,42 +1189,19 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       const totalBytes = await estimateArweaveBytes(current.id, tokenList.length);
       const existingProgress = await loadUploadProgress(current.id);
       const estimate = await fetchStorageEstimate(publicKey, current.id, totalBytes);
-      const network = await getClientNetwork();
-
-      let paymentSignature: string | undefined;
-      const useServerBulk =
-        estimate.serverBulkUpload &&
-        estimate.platformWallet &&
-        tokenList.length > 1;
-
-      if (useServerBulk) {
-        if (estimate.storagePaid) {
-          setGoLivePhase("Resuming Arweave upload (storage already paid)…");
-          paymentSignature = existingProgress?.storagePaymentSignature;
-        } else if (existingProgress?.storagePaymentSignature) {
-          setGoLivePhase("Resuming Arweave upload — verifying prior payment…");
-          paymentSignature = existingProgress.storagePaymentSignature;
-        } else {
-          setGoLivePhase(
-            `Approve one-time storage payment (~${estimate.walletPaymentSol.toFixed(4)} SOL) in your wallet…`,
-          );
-          paymentSignature = await payPlatformForArweaveStorage(
-            estimate.irysTotalSol,
-            estimate.platformWallet!,
-            network,
-          );
-          await saveUploadProgress(current.id, {
-            completed: existingProgress?.completed ?? {},
-            logoUri: existingProgress?.logoUri,
-            storagePaymentSignature: paymentSignature,
-          });
-        }
-        setGoLivePhase("Uploading to Arweave — keep this tab open…");
-      } else {
-        setGoLivePhase(
-          `Funding Arweave storage (~${estimate.walletPaymentSol.toFixed(4)} SOL) — approve in your wallet…`,
+      const serverNetwork = estimate.network ?? (await getClientNetwork());
+      const clientNetwork = await getClientNetwork();
+      if (serverNetwork !== clientNetwork) {
+        throw new Error(
+          `Phantom is on ${clientNetwork} but this site uses ${serverNetwork}. ` +
+            `Switch your wallet to ${serverNetwork} in Phantom settings, then retry Go Live.`,
         );
       }
+      const network = serverNetwork;
+
+      setGoLivePhase(
+        `Funding Arweave storage (~${estimate.walletPaymentSol.toFixed(4)} SOL to Irys) — approve in your wallet…`,
+      );
 
       const uploadTokens = [];
       for (const token of tokenList) {
@@ -1260,65 +1233,37 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         logoBytes = new Uint8Array(logoAsset.data);
       }
 
-      if (!useServerBulk) {
-        setGoLivePhase("Uploading to Arweave — keep this tab open…");
-      }
+      setGoLivePhase("Uploading to Arweave — keep this tab open…");
 
-      const uploaded = useServerBulk
-        ? await uploadCollectionViaServer({
-            collectionId: current.id,
-            wallet: publicKey,
-            tokens: uploadTokens,
-            logoBytes,
-            logoContentType: logoAsset?.contentType,
-            paymentSignature,
-            minSol: estimate.irysTotalSol,
-            getAuthHeaders: () => buildAuthHeaders(publicKey),
-            existingProgress: existingProgress?.completed,
-            existingLogoUri: existingProgress?.logoUri,
-            onProgress: (p) => {
-              if (p.phase === "uploading-logo") {
-                setArweaveUploadDetail("Uploading logo…");
-              } else {
-                setArweaveUploadDetail(
-                  p.tokenId != null
-                    ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
-                    : `${p.done} / ${p.total} uploads`,
-                );
-              }
-            },
-          })
-        : await uploadCollectionWithPhantom({
-            collectionId: current.id,
-            tokens: uploadTokens,
-            logoBytes,
-            logoContentType: logoAsset?.contentType,
-            network,
-            existingProgress: existingProgress?.completed,
-            existingLogoUri: existingProgress?.logoUri,
-            onFundNeeded: () => {
-              setGoLivePhase("Approve storage payment in your wallet…");
-            },
-            onProgress: (p) => {
-              if (p.phase === "funding") {
-                setGoLivePhase("Approve storage payment in your wallet…");
-              } else if (p.phase === "uploading-logo") {
-                setArweaveUploadDetail("Uploading logo…");
-              } else {
-                setArweaveUploadDetail(
-                  p.tokenId != null
-                    ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
-                    : `${p.done} / ${p.total} uploads`,
-                );
-              }
-            },
-          });
+      const uploaded = await uploadCollectionWithPhantom({
+        collectionId: current.id,
+        tokens: uploadTokens,
+        logoBytes,
+        logoContentType: logoAsset?.contentType,
+        network,
+        existingProgress: existingProgress?.completed,
+        existingLogoUri: existingProgress?.logoUri,
+        onFundNeeded: () => {
+          setGoLivePhase("Approve Irys storage payment in your wallet…");
+        },
+        onProgress: (p) => {
+          if (p.phase === "funding") {
+            setGoLivePhase("Approve Irys storage payment in your wallet…");
+          } else if (p.phase === "uploading-logo") {
+            setArweaveUploadDetail("Uploading logo…");
+          } else {
+            setArweaveUploadDetail(
+              p.tokenId != null
+                ? `Token #${p.tokenId} — ${p.done} / ${p.total} uploads`
+                : `${p.done} / ${p.total} uploads`,
+            );
+          }
+        },
+      });
 
       await saveUploadProgress(current.id, {
         completed: uploaded.tokens,
         logoUri: uploaded.logoUri,
-        storagePaymentSignature:
-          paymentSignature ?? existingProgress?.storagePaymentSignature,
       });
 
       const uriRows = tokenList.map((t) => {
@@ -2762,39 +2707,16 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                       {formatSolAmount(launchCosts.irysBundlerBufferSol)} SOL
                     </span>
                   </div>
-                  {launchCosts.storagePaid ? (
-                    <div className="flex justify-between text-emerald-400/90">
-                      <span>Storage payment</span>
-                      <span>Paid — resume upload only</span>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex justify-between text-white/60">
-                        <span>Wallet payment buffer (+2%)</span>
-                        <span className="shrink-0 text-right">
-                          {formatSolAmount(launchCosts.walletBufferSol)} SOL
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-white/70">
-                        <span>→ Transfer to platform (Irys + buffers)</span>
-                        <span className="shrink-0 text-right">
-                          {formatSolAmount(launchCosts.walletPaymentSol)} SOL
-                          <span className="block text-xs text-white/40">
-                            ≈ ${launchCosts.walletPaymentUsd.toFixed(2)}
-                          </span>
-                        </span>
-                      </div>
-                    </>
-                  )}
                   <div className="flex justify-between text-white/70">
-                    <span>Solana gas (storage payment tx)</span>
+                    <span>→ Fund Irys from your wallet</span>
                     <span className="shrink-0 text-right">
-                      {launchCosts.storagePaid ? "—" : formatSolAmount(launchCosts.gasSol) + " SOL"}
-                      {!launchCosts.storagePaid && (
-                        <span className="block text-xs text-white/40">
-                          ≈ ${launchCosts.gasUsd.toFixed(2)}
-                        </span>
-                      )}
+                      {formatSolAmount(launchCosts.irysTotalSol)} SOL
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-white/70">
+                    <span>Solana gas (Irys funding tx)</span>
+                    <span className="shrink-0 text-right">
+                      {formatSolAmount(launchCosts.gasSol)} SOL
                     </span>
                   </div>
                   <div className="flex justify-between text-white/70">
@@ -2804,23 +2726,18 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                   <div className="mt-2 flex justify-between border-t border-white/10 pt-2 font-medium text-white">
                     <span>Total due from your wallet</span>
                     <span className="shrink-0 text-right">
-                      {launchCosts.storagePaid
-                        ? "0 SOL (paid)"
-                        : `${formatSolAmount(launchCosts.totalSol)} SOL`}
-                      {!launchCosts.storagePaid && (
-                        <span className="block text-xs font-normal text-white/50">
-                          ≈ ${launchCosts.totalUsd.toFixed(2)}
-                        </span>
-                      )}
+                      {formatSolAmount(launchCosts.totalSol)} SOL
+                      <span className="block text-xs font-normal text-white/50">
+                        ≈ ${launchCosts.totalUsd.toFixed(2)}
+                      </span>
                     </span>
                   </div>
                 </div>
               ) : null}
               <p className="mt-3 text-[11px] text-white/35">
-                {launchCosts?.serverBulkUpload
-                  ? "One wallet payment covers all uploads — no per-file signatures. "
-                  : "You fund Arweave from your wallet and sign each upload. "}
-                Keep this tab open until upload finishes (large collections can take over an hour).
+                You fund Irys directly from your wallet — no platform wallet involved. Resuming only
+                charges any remaining Irys balance. Keep this tab open until upload finishes (large
+                collections can take over an hour).
                 No Crypgo launch fee — marketplace takes {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint (
                 {PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax) and{" "}
                 {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales only.

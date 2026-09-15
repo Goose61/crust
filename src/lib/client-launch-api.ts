@@ -185,9 +185,7 @@ export async function fetchStorageEstimate(
   storageUsd: number | null;
   totalUpfrontUsd: number | null;
   network?: "devnet" | "mainnet";
-  serverBulkUpload?: boolean;
-  platformWallet?: string | null;
-  storagePaid?: boolean;
+  creatorPaysIrys?: boolean;
 }> {
   const headers = authHeaders ?? (await buildAuthHeaders(wallet));
   const res = await fetch(
@@ -209,17 +207,13 @@ export async function fetchStorageEstimate(
     storageUsd?: number | null;
     totalUpfrontUsd?: number | null;
     network?: "devnet" | "mainnet";
-    serverBulkUpload?: boolean;
-    platformWallet?: string | null;
-    storagePaid?: boolean;
+    creatorPaysIrys?: boolean;
     error?: string;
   }>(res);
   if (!res.ok) throw new Error(data.error || "Could not estimate storage");
   const irysTotalSol = data.irysTotalSol ?? data.sol * 1.1;
-  const walletPaymentSol = data.storagePaid
-    ? 0
-    : (data.walletPaymentSol ?? data.solWithBuffer ?? data.sol * 1.122);
-  const gasSol = data.storagePaid ? 0 : (data.gasSol ?? data.txFeeSol ?? 0.00005);
+  const walletPaymentSol = data.walletPaymentSol ?? irysTotalSol;
+  const gasSol = data.gasSol ?? data.txFeeSol ?? 0.00005;
   return {
     lamports: data.lamports,
     sol: data.sol,
@@ -235,8 +229,6 @@ export async function fetchStorageEstimate(
     storageUsd: data.storageUsd ?? null,
     totalUpfrontUsd: data.totalUpfrontUsd ?? null,
     network: data.network,
-    serverBulkUpload: data.serverBulkUpload,
-    platformWallet: data.platformWallet,
-    storagePaid: data.storagePaid,
+    creatorPaysIrys: data.creatorPaysIrys ?? true,
   };
 }

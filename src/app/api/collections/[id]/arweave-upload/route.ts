@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { assertCollectionArweaveStoragePaid } from "@/lib/arweave-storage-payment";
 import { ensureIrysFundedForBytes, uploadToArweaveServer } from "@/lib/irys-server";
 import { getCollection, updateCollection } from "@/lib/store";
+import { getSolanaNetwork } from "@/lib/solana-config";
 import { assertCreatorAuth, requireWalletAuth } from "@/lib/wallet-auth";
 
 export const runtime = "nodejs";
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       collectionId: id,
       paymentSignature: body.paymentSignature,
       minSol,
+      network: getSolanaNetwork(),
     });
 
     let batchBytes = 0;

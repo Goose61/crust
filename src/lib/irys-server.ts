@@ -9,9 +9,11 @@ import {
 } from "./irys-shared";
 import {
   getCollectionArweavePayment,
+  getPaymentNetworkForCollection,
   markCollectionIrysFunded,
 } from "./arweave-storage-payment";
-import { getDirectRpcUrl, getSolanaNetwork, isDevnetNetwork } from "./solana-config";
+import { getPlatformWalletBalance } from "./platform-wallet-balance";
+import { getDirectRpcUrl, getSolanaNetwork, isDevnetNetwork, type SolanaNetwork } from "./solana-config";
 
 type IrysSigner = {
   publicKey: Buffer;
@@ -29,8 +31,16 @@ export function isServerArweaveUploadAvailable(): boolean {
   return !!getPlatformSecretKey();
 }
 
-function irysNodeUrl(): string {
-  return isDevnetNetwork(getSolanaNetwork()) ? IRYS_NODE_DEVNET : IRYS_NODE_MAINNET;
+function irysNodeUrl(network?: SolanaNetwork): string {
+  const net = network ?? getSolanaNetwork();
+  return isDevnetNetwork(net) ? IRYS_NODE_DEVNET : IRYS_NODE_MAINNET;
+}
+
+async function resolveUploadNetwork(collectionId?: string): Promise<SolanaNetwork> {
+  if (collectionId) {
+    return getPaymentNetworkForCollection(collectionId);
+  }
+  return getSolanaNetwork();
 }
 
 async function loadBundles() {
@@ -123,9 +133,9 @@ export async function ensureIrysFundedForBytes(
   bytesNeeded: number,
   collectionId?: string,
 ): Promise<void> {
-  const node = irysNodeUrl();
+  const network = await resolveUploadNetwork(collectionId);
+  const node = irysNodeUrl(network);
   const address = await signerAddress();
-  const network = getSolanaNetwork();
   const devnet = isDevnetNetwork(network);
   const price = await fetchIrysPriceLamports(bytesNeeded, devnet);
   let balance = await fetchIrysAccountBalanceLamports(address, devnet);
@@ -167,10 +177,13 @@ export async function ensureIrysFundedForBytes(
   }
 
   if (toFund < deficit) {
+    const bal = await getPlatformWalletBalance(network);
     throw new Error(
       `Platform wallet (${address}) cannot fund Irys on ${network}: need ~${lamportsToSolStr(deficit)} SOL ` +
-        `but only ~${lamportsToSolStr(maxTransfer)} SOL is transferable after rent reserve. ` +
-        `Re-pay storage using the full Go Live estimate (Irys + buffers + gas).`,
+        `but only ~${lamportsToSolStr(maxTransfer)} SOL is transferable ` +
+        `(~${bal?.onChainSol.toFixed(4) ?? "0"} SOL on-chain). ` +
+        `Storage payment must send SOL to ${address} on ${network} — your creator wallet balance is separate. ` +
+        `Switch Phantom to ${network}, open Go Live, and pay the full estimate again.`,
     );
   }
 
@@ -223,8 +236,8 @@ export async function ensureIrysFundedForBytes(
   }
 }
 
-async function postSignedDataItem(raw: Buffer): Promise<string> {
-  const node = irysNodeUrl();
+async function postSignedDataItem(raw: Buffer, network?: SolanaNetwork): Promise<string> {
+  const node = irysNodeUrl(network);
   const res = await fetch(`${node}/tx/solana`, {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
@@ -272,12 +285,16 @@ export async function uploadToArweaveServer(
   contentType: string,
   opts?: { skipFund?: boolean; collectionId?: string },
 ): Promise<string> {
+  const network = opts?.collectionId
+    ? await resolveUploadNetwork(opts.collectionId)
+    : getSolanaNetwork();
+
   if (!opts?.skipFund) {
     await ensureIrysFundedForBytes(data.length + 512, opts?.collectionId);
   }
   const { item, id } = await buildSignedDataItem(data, contentType);
   try {
-    const postedId = await postSignedDataItem(item.getRaw());
+    const postedId = await postSignedDataItem(item.getRaw(), network);
     return `${IRYS_GATEWAY}/${postedId || id}`;
   } catch (err) {
     if (id) return `${IRYS_GATEWAY}/${id}`;

@@ -10,17 +10,12 @@ export type LaunchCostEstimate = {
   /** Irys byte-price quote (before bundler buffer). */
   irysBaseSol: number;
   irysBundlerBufferSol: number;
+  /** Irys quote + 10% bundler buffer — funded directly from creator wallet. */
   irysTotalSol: number;
-  walletBufferSol: number;
-  walletPaymentSol: number;
   gasSol: number;
   totalSol: number;
   irysBaseUsd: number;
-  walletPaymentUsd: number;
-  gasUsd: number;
   totalUsd: number;
-  storagePaid: boolean;
-  serverBulkUpload: boolean;
   solUsd: number;
 };
 
@@ -32,9 +27,7 @@ export async function fetchLaunchCostEstimate(
   const totalBytes = await estimateArweaveBytes(collectionId, tokenCount);
   const est = await fetchStorageEstimate(wallet, collectionId, totalBytes);
   const solUsd = est.solPriceUsd ?? SOL_USD_FALLBACK;
-  const walletPaymentSol = est.storagePaid ? 0 : est.walletPaymentSol;
-  const gasSol = est.storagePaid ? 0 : est.gasSol;
-  const totalSol = walletPaymentSol + gasSol;
+  const totalSol = est.walletPaymentSol + est.gasSol;
 
   return {
     totalBytes,
@@ -43,16 +36,10 @@ export async function fetchLaunchCostEstimate(
     irysBaseSol: est.sol,
     irysBundlerBufferSol: est.irysBundlerBufferSol,
     irysTotalSol: est.irysTotalSol,
-    walletBufferSol: est.storagePaid ? 0 : est.walletBufferSol,
-    walletPaymentSol,
-    gasSol,
+    gasSol: est.gasSol,
     totalSol,
     irysBaseUsd: est.sol * solUsd,
-    walletPaymentUsd: walletPaymentSol * solUsd,
-    gasUsd: gasSol * solUsd,
     totalUsd: totalSol * solUsd,
-    storagePaid: !!est.storagePaid,
-    serverBulkUpload: !!est.serverBulkUpload,
     solUsd,
   };
 }
