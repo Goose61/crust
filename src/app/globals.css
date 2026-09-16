@@ -196,10 +196,22 @@ section {
   border-color: var(--primary);
 }
 
-.tile {
-  overflow: hidden;
-  border-radius: var(--tile-radius);
-  border: 1px solid var(--border);
+select option {
   background: var(--card);
   color: #ffffff;
+}
+
+.nft-card {
+  overflow: hidden;
+  border-radius: 1.15rem;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  background: var(--card);
+  color: #ffffff;
+  transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+
+.nft-card:hover {
+  border-color: rgb(255 255 255 / 0.28);
+  transform: translateY(-2px);
+  box-shadow: 0 16px 36px rgb(0 0 0 / 0.32);
 }

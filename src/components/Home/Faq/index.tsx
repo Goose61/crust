@@ -12,7 +12,7 @@ const faqData = [
   {
     question: "What is this marketplace?",
     answer:
-      "A Solana NFT marketplace for launching collections, running primary mints, and listing secondary sales in the same product. Collections do not graduate to another site.",
+      "Ginger is a Solana NFT marketplace for launching collections, running primary mints, and listing secondary sales in the same product. Collections do not graduate to another site.",
   },
   {
     question: "What can I launch here?",
@@ -40,9 +40,9 @@ const faqData = [
       "It stays listed here. Sold out is a milestone. Creators can unlock a holder lounge, snapshots, and native secondary listings on this market.",
   },
   {
-    question: "What fees does Crypgo charge?",
+    question: "What fees does Ginger charge?",
     answer:
-      "No launch fee. Primary mints: 0.7% platform + 0.3% trade tax (1% total, deducted before your creator split). Secondary sales: 0.5%. You configure how your share splits across creator, holders, and buyback treasury. Payment processing is covered by Crypgo — buyers and creators never see a checkout surcharge.",
+      "No launch fee. Primary mints: 0.7% platform + 0.3% trade tax (1% total, deducted before your creator split). Secondary sales: 0.5%. You configure how your share splits across creator, holders, and buyback treasury. Payment processing is covered by Ginger — buyers and creators never see a checkout surcharge.",
   },
   {
     question: "Is there a gift mint or allowlist?",

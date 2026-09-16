@@ -6,7 +6,9 @@ import type { Collection, GeneratedToken } from "@/lib/types";
 import { useWallet, networkName } from "./WalletProvider";
 import { explorerClusterQuery } from "@/lib/solana-config";
 import { isGiftBundle } from "@/lib/gift-bundle";
-import { formatUsd, filterTokensByTrait, isTokenSold, nftPrice, tokenImageSrc, tokenName, uniqueTraitFilters } from "@/lib/collection-ui";
+import { formatUsd, formatUsdAmount, filterTokensByTrait, filterTokensByStatus, filterTokensBySearch, sortTokens, isTokenSold, nftPrice, tokenImageSrc, tokenThumbSrc, tokenName, uniqueTraitFilters, logoImageSrc, COLLECTION_GRID_PAGE_SIZE, type TokenSort, type TokenStatusFilter } from "@/lib/collection-ui";
+import { collectionMarketStats } from "@/lib/collection-stats";
+import { CollectionSocialLinks } from "@/components/CollectionSocialLinks";
 import { readJsonResponse } from "@/lib/fetch-json";
 import { buildAuthHeaders } from "@/lib/wallet-auth-client";
 import {
@@ -39,25 +41,38 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   const [checkoutKind, setCheckoutKind] = useState<"primary_mint" | "secondary_buy">("primary_mint");
   const [listPrice, setListPrice] = useState("");
   const [traitFilters, setTraitFilters] = useState<Record<string, string>>({});
+  const [statusFilter, setStatusFilter] = useState<TokenStatusFilter>("all");
+  const [sort, setSort] = useState<TokenSort>("id_asc");
+  const [search, setSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(COLLECTION_GRID_PAGE_SIZE);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pendingTokenRef = useRef<GeneratedToken | null>(null);
   const returnHandledRef = useRef(false);
 
   const tokens = useMemo(() => {
-    const sorted = [...collection.tokens].sort((a, b) => a.tokenId - b.tokenId);
-    return filterTokensByTrait(sorted, collection, traitFilters);
-  }, [collection, traitFilters]);
+    const searched = filterTokensBySearch(collection.tokens, collection, search);
+    const byStatus = filterTokensByStatus(searched, collection, statusFilter);
+    const byTrait = filterTokensByTrait(byStatus, collection, traitFilters);
+    return sortTokens(byTrait, collection, sort);
+  }, [collection, traitFilters, statusFilter, sort, search]);
   const traitFilterOptions = useMemo(
-    () => (collection.traitBrowserEnabled ? uniqueTraitFilters(collection) : []),
+    () => uniqueTraitFilters(collection),
     [collection],
   );
-  const soldCount = tokens.filter((t) => isTokenSold(t, collection)).length;
-  const remaining = Math.max(0, collection.supply - soldCount);
+  const stats = useMemo(() => collectionMarketStats(collection), [collection]);
+  const soldCount = stats.sold;
+  const remaining = stats.available;
+  const visibleTokens = tokens.slice(0, visibleCount);
+  const logoSrc = logoImageSrc(collection);
   const fees = collection.fees;
   const socials = collection.socials ?? {};
 
   const [mintBusy, setMintBusy] = useState(false);
+
+  useEffect(() => {
+    setVisibleCount(COLLECTION_GRID_PAGE_SIZE);
+  }, [search, statusFilter, sort, traitFilters]);
 
   const pendingOnChainToken = useMemo(() => {
     if (!publicKey) return null;
@@ -472,26 +487,12 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   }
 
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-10">
-      {/* Collection identity header */}
-      <div className="mb-8 flex items-center gap-4">
-        {collection.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={collection.logoUrl} alt={collection.name}
-            className="h-16 w-16 rounded-2xl border border-white/15 object-cover" />
-        ) : (
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/15 bg-white/5 text-2xl font-bold text-white/30">
-            {collection.name.slice(0, 2).toUpperCase()}
-          </div>
-        )}
-        <div>
-          <p className="font-[family-name:var(--font-mono)] text-[11px] tracking-[0.22em] text-white/40">
-            {collection.chain.toUpperCase()} · {collection.symbol}
-          </p>
-          <h1 className="text-3xl font-bold text-white">{collection.name}</h1>
-        </div>
-      </div>
-
+    <div className="relative overflow-hidden">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-[26rem] bg-[radial-gradient(ellipse_at_top,rgba(226,60,47,0.14),transparent_58%)]"
+      />
+    <div className="container relative mx-auto max-w-6xl px-4 py-10">
       {isUnmintedGift && pendingOnChainToken && (
         <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -530,36 +531,52 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         <p className="mb-4 text-sm text-white/60">{message}</p>
       )}
 
-      <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-        <div>
-          <p className="font-[family-name:var(--font-mono)] text-[11px] tracking-[0.22em] text-white/40">
-            {collection.chain.toUpperCase()} · {collection.symbol}
-          </p>
-          <h2 className="mt-2 text-4xl font-bold text-white">{collection.name}</h2>
-          <p className="mt-4 max-w-xl font-[family-name:var(--font-body)] text-sm leading-6 text-white/60">
+      <div className="overflow-hidden rounded-3xl border border-white/12 bg-card">
+        <div className="grid gap-0 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="p-6 sm:p-8">
+          <div className="flex items-start gap-5">
+            {logoSrc ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={logoSrc}
+                alt={collection.name}
+                className="h-20 w-20 shrink-0 rounded-2xl border border-white/15 object-cover sm:h-24 sm:w-24"
+              />
+            ) : (
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/5 text-2xl font-bold text-white/30 sm:h-24 sm:w-24">
+                {collection.name.slice(0, 2).toUpperCase()}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="font-[family-name:var(--font-mono)] text-[11px] tracking-[0.22em] text-white/40">
+                {collection.chain.toUpperCase()} · {collection.symbol}
+              </p>
+              <h1 className="mt-2 text-4xl font-bold tracking-tight text-white sm:text-5xl">{collection.name}</h1>
+              <div className="mt-4">
+                <CollectionSocialLinks socials={socials} />
+              </div>
+            </div>
+          </div>
+          <p className="mt-5 max-w-xl font-[family-name:var(--font-body)] text-sm leading-6 text-white/60">
             {collection.description}
           </p>
 
-          <div className="mt-6 flex flex-wrap gap-2">
-            {socials.twitter && <SocialChip href={socials.twitter} label="X" />}
-            {socials.discord && <SocialChip href={socials.discord} label="Discord" />}
-            {socials.telegram && <SocialChip href={socials.telegram} label="Telegram" />}
-            {socials.website && <SocialChip href={socials.website} label="Website" />}
-          </div>
-
-          <dl className="mt-8 grid grid-cols-3 gap-3">
+          <dl className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Stat label="Floor" value={formatUsd(stats.floorUsd)} tip="Lowest listing, or cheapest remaining mint price" />
+            <Stat label="Volume" value={formatUsdAmount(stats.volumeUsd)} tip="All-time primary + secondary sales" />
+            <Stat label="Market cap" value={formatUsdAmount(stats.marketCapUsd)} tip="Floor × total supply" />
             <Stat label="Price from" value={formatUsd(collection.payments.basePriceUsd)} />
             <Stat label="Available" value={String(remaining)} />
             <Stat label="Sold" value={String(soldCount)} />
           </dl>
         </div>
 
-        <div className="tile p-5">
+        <div className="border-t border-white/10 p-6 sm:p-8 lg:border-l lg:border-t-0">
           <h2 className="text-2xl">Fee structure</h2>
           <p className="mt-2 font-[family-name:var(--font-body)] text-sm text-white/50">
-            Creator split locks at launch. Crypgo marketplace fees are fixed and deducted before your split.
+            Creator split locks at launch. Ginger marketplace fees are fixed and deducted before your split.
           </p>
-          <div className="mt-5 flex h-3 overflow-hidden border border-white/15">
+          <div className="mt-5 flex h-3 overflow-hidden rounded-full border border-white/15">
             <div className="bg-primary" style={{ width: `${fees.ownerPercent}%` }} />
             <div className="bg-white" style={{ width: `${fees.holdersPercent}%` }} />
             <div className="bg-[#f5c542]" style={{ width: `${fees.buybackPercent}%` }} />
@@ -569,11 +586,12 @@ export function CollectionMint({ initial }: { initial: Collection }) {
             <FeeRow color="bg-white" label="Holders" percent={fees.holdersPercent} note="Shared with current holders" />
             <FeeRow color="bg-[#f5c542]" label="Buyback" percent={fees.buybackPercent} note="Treasury buybacks" />
           </ul>
-          <div className="mt-4 rounded border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/50">
-            <p className="font-medium text-white/70">Crypgo marketplace (fixed)</p>
+          <div className="mt-4 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/50">
+            <p className="font-medium text-white/70">Ginger marketplace (fixed)</p>
             <p className="mt-1">Primary: {PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax ({PRIMARY_PLATFORM_TOTAL_PERCENT}% total)</p>
             <p>Secondary: {SECONDARY_PLATFORM_FEE_PERCENT}%</p>
           </div>
+        </div>
         </div>
       </div>
 
@@ -581,39 +599,83 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         <div className="mb-5 flex items-end justify-between gap-4 flex-wrap">
           <h2 className="text-4xl">The collection</h2>
           <p className="font-[family-name:var(--font-mono)] text-xs text-white/50">
-            {remaining} for sale · {soldCount} sold
+            {tokens.length} shown · {remaining} for sale · {soldCount} sold
           </p>
         </div>
 
-        {collection.traitBrowserEnabled && traitFilterOptions.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-2">
-            {traitFilterOptions.map(({ traitType, values }) => (
-              <label key={traitType} className="text-xs text-white/60">
-                {traitType}
-                <select
-                  className="ml-1 rounded border border-white/15 bg-white/5 px-2 py-1 text-white"
-                  value={traitFilters[traitType] ?? ""}
-                  onChange={(e) =>
-                    setTraitFilters((prev) => {
-                      const next = { ...prev };
-                      if (e.target.value) next[traitType] = e.target.value;
-                      else delete next[traitType];
-                      return next;
-                    })
-                  }
+        <div className="sticky top-[calc(var(--nav-h)+10px)] z-20 mb-5 rounded-2xl border border-white/10 bg-background/85 p-3 backdrop-blur-md">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <input
+              className="input lg:max-w-xs"
+              placeholder="Search # or name"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {(["all", "for_sale", "sold", "listed"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setStatusFilter(value)}
+                  className={`rounded-full px-3 py-1.5 text-xs capitalize transition ${
+                    statusFilter === value
+                      ? "bg-primary text-white"
+                      : "border border-white/12 bg-white/5 text-white/60 hover:text-white"
+                  }`}
                 >
-                  <option value="">All</option>
-                  {values.map((v) => (
-                    <option key={v} value={v}>{v}</option>
-                  ))}
-                </select>
-              </label>
-            ))}
+                  {value === "for_sale" ? "For sale" : value}
+                </button>
+              ))}
+            </div>
+            <label className="ml-auto flex items-center gap-2 text-xs text-white/50">
+              Sort
+              <select
+                className="rounded-lg border border-white/12 bg-white/5 px-2 py-1.5 text-white"
+                value={sort}
+                onChange={(e) => setSort(e.target.value as TokenSort)}
+              >
+                <option value="id_asc">Token ID</option>
+                <option value="price_asc">Price: low to high</option>
+                <option value="price_desc">Price: high to low</option>
+              </select>
+            </label>
           </div>
-        )}
+          {traitFilterOptions.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2 border-t border-white/8 pt-3">
+              {traitFilterOptions.map(({ traitType, values }) => (
+                <label key={traitType} className="text-xs text-white/60">
+                  {traitType}
+                  <select
+                    className="ml-1 rounded-lg border border-white/12 bg-white/5 px-2 py-1 text-white"
+                    value={traitFilters[traitType] ?? ""}
+                    onChange={(e) =>
+                      setTraitFilters((prev) => {
+                        const next = { ...prev };
+                        if (e.target.value) next[traitType] = e.target.value;
+                        else delete next[traitType];
+                        return next;
+                      })
+                    }
+                  >
+                    <option value="">All</option>
+                    {values.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
 
+        {tokens.length === 0 ? (
+          <p className="rounded-2xl border border-white/10 bg-white/5 px-4 py-8 text-center text-sm text-white/50">
+            No NFTs match those filters.
+          </p>
+        ) : (
+          <>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {tokens.map((token) => {
+          {visibleTokens.map((token, index) => {
             const sold = isTokenSold(token, collection);
             const listed = Boolean(token.listing);
             const priceLabel = listed
@@ -631,25 +693,30 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                   setInvoiceId(null);
                   setMessage(null);
                 }}
-                className="tile text-left"
+                className="nft-card group text-left"
               >
-                <div className="relative aspect-square">
+                <div className="relative aspect-square overflow-hidden">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={tokenImageSrc(collection, token)}
+                    src={tokenThumbSrc(collection, token)}
                     alt={tokenName(collection, token)}
-                    className={`h-full w-full object-cover ${sold ? "grayscale" : ""}`}
+                    loading={index < 8 ? "eager" : "lazy"}
+                    decoding="async"
+                    className={`h-full w-full object-cover transition duration-500 ${sold ? "grayscale" : "group-hover:scale-[1.04]"}`}
                   />
                   <span
-                    className={`absolute left-2 top-2 px-1.5 py-0.5 font-[family-name:var(--font-mono)] text-[10px] ${
-                      sold ? "bg-white text-black" : "bg-primary text-white"
+                    className={`absolute left-2.5 top-2.5 rounded-full px-2 py-0.5 font-[family-name:var(--font-mono)] text-[10px] ${
+                      sold && !listed ? "bg-white text-black" : "bg-primary text-white"
                     }`}
                   >
                     {priceLabel}
                   </span>
                 </div>
-                <div className="border-t border-white/15 px-2 py-2">
-                  <div className="font-[family-name:var(--font-body)] text-xs font-medium">
+                <div className="border-t border-white/10 px-3 py-2.5">
+                  <div className="truncate text-sm font-medium text-white">
+                    {tokenName(collection, token)}
+                  </div>
+                  <div className="mt-0.5 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.12em] text-white/40">
                     #{token.tokenId}
                   </div>
                 </div>
@@ -657,6 +724,19 @@ export function CollectionMint({ initial }: { initial: Collection }) {
             );
           })}
         </div>
+        {visibleCount < tokens.length && (
+          <div className="mt-6 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setVisibleCount((n) => n + COLLECTION_GRID_PAGE_SIZE)}
+              className="rounded-full border border-white/15 bg-white/5 px-5 py-2 text-sm text-white/80 hover:border-white/30 hover:text-white"
+            >
+              Load more · {tokens.length - visibleCount} remaining
+            </button>
+          </div>
+        )}
+          </>
+        )}
       </section>
 
       {selected && (
@@ -665,7 +745,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
           onClick={() => setSelected(null)}
         >
           <div
-            className="tile max-h-[90vh] w-full max-w-3xl overflow-y-auto"
+            className="tile max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="grid md:grid-cols-2">
@@ -903,29 +983,17 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         </div>
       )}
     </div>
+    </div>
   );
 }
 
-function SocialChip({ href, label }: { href: string; label: string }) {
+function Stat({ label, value, tip }: { label: string; value: string; tip?: string }) {
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="border border-white/15 px-3 py-1 font-[family-name:var(--font-body)] text-xs hover:border-primary hover:text-primary"
-    >
-      {label}
-    </a>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="tile p-3">
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-3" title={tip}>
       <dt className="font-[family-name:var(--font-mono)] text-[10px] tracking-[0.14em] text-white/50">
         {label.toUpperCase()}
       </dt>
-      <dd className="mt-1 text-xl">{value}</dd>
+      <dd className="mt-1 text-xl text-white">{value}</dd>
     </div>
   );
 }

@@ -16,6 +16,7 @@ import {
 } from "@/lib/types";
 import { tokenImageSrc } from "@/lib/collection-ui";
 import { buildAuthHeaders, AUTH_TTL_MS } from "@/lib/wallet-auth-client";
+import { uploadCollectionLogo } from "@/lib/upload-collection-logo";
 import { readJsonResponse } from "@/lib/fetch-json";
 import {
   assetToObjectUrl,
@@ -275,6 +276,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [draftsLoading, setDraftsLoading] = useState(false);
   const [draftsLoaded, setDraftsLoaded] = useState(false);
   const [needsRezip, setNeedsRezip] = useState(false);
+  const [needsLogo, setNeedsLogo] = useState(false);
   const [localPreviewUrls, setLocalPreviewUrls] = useState<Map<number, string>>(new Map());
   const [goLivePhase, setGoLivePhase] = useState<string | null>(null);
   const [arweaveUploadDetail, setArweaveUploadDetail] = useState<string | null>(null);
@@ -442,14 +444,45 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     };
   }
 
-  async function restoreLogoPreview(collectionId: string) {
-    const logo = await getLogo(collectionId);
+  async function restoreLogoPreview(collectionId: string, logoUrl?: string) {
+    let logo = await getLogo(collectionId);
+    if (!logo && logoUrl) {
+      try {
+        const res = await fetch(logoUrl);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          const type = res.headers.get("content-type") || "image/png";
+          await putLogo(collectionId, buf, type);
+          logo = { data: buf, contentType: type };
+        }
+      } catch {
+        // fall through to missing-logo state
+      }
+    }
     if (logo) {
       setLogoPreview(URL.createObjectURL(new Blob([logo.data], { type: logo.contentType })));
+      setNeedsLogo(false);
+    } else if (logoUrl) {
+      setLogoPreview(logoUrl);
+      setNeedsLogo(false);
     } else {
       setLogoPreview(null);
+      setNeedsLogo(true);
     }
     setLogoFile(null);
+  }
+
+  async function persistLogoFile(col: Collection, file: File) {
+    const buf = await file.arrayBuffer();
+    await putLogo(col.id, buf, file.type || "image/png");
+    setNeedsLogo(false);
+    if (!publicKey) return;
+    try {
+      const { logoUrl } = await uploadCollectionLogo(col.id, file, publicKey);
+      setCollection((prev) => (prev ? { ...prev, logoUrl } : prev));
+    } catch {
+      // IndexedDB still has the file for Go Live
+    }
   }
 
   function applyLaunchDraft(col: Collection) {
@@ -474,7 +507,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     setCollection(withPricing);
     setAllowlistText(col.allowlist?.join("\n") ?? "");
     void checkLocalAssets(withPricing);
-    void restoreLogoPreview(col.id);
+    void restoreLogoPreview(col.id, col.logoUrl);
   }
 
   async function checkLocalAssets(col: Collection) {
@@ -1720,6 +1753,15 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           </button>
         </div>
       )}
+      {needsLogo && collection && (
+        <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <p className="font-medium">Collection logo missing</p>
+          <p className="mt-1 text-amber-100/80">
+            Saved launches store the logo in this browser. Re-upload it on the Collection step so
+            it publishes with the drop.
+          </p>
+        </div>
+      )}
       {goLivePhase && (
         <div className="mb-6 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-white">
           <p>{goLivePhase}</p>
@@ -2282,6 +2324,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                     const f = e.target.files?.[0] ?? null;
                     setLogoFile(f);
                     setLogoPreview(f ? URL.createObjectURL(f) : null);
+                    if (f && collection) void persistLogoFile(collection, f);
                   }} />
               </label>
             </div>
@@ -2507,13 +2550,13 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             </div>
 
             <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60">
-              <p className="font-medium text-white/80">Crypgo marketplace fees (fixed, not part of your split)</p>
+              <p className="font-medium text-white/80">Ginger marketplace fees (fixed, not part of your split)</p>
               <p className="mt-1">
                 Primary: {PRIMARY_PLATFORM_FEE_PERCENT}% platform + {PRIMARY_TRADE_TAX_PERCENT}% trade tax
                 ({PRIMARY_PLATFORM_TOTAL_PERCENT}% total, deducted before your split)
               </p>
               <p>Secondary: {SECONDARY_PLATFORM_FEE_PERCENT}% on resales</p>
-              <p className="mt-1 text-white/40">No launch fee. Payment processing is covered by Crypgo.</p>
+              <p className="mt-1 text-white/40">No launch fee. Payment processing is covered by Ginger.</p>
             </div>
 
             {/* Visual bar */}
@@ -2835,7 +2878,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                     </span>
                   </div>
                   <div className="flex justify-between text-white/70">
-                    <span>Crypgo launch fee</span>
+                    <span>Ginger launch fee</span>
                     <span>$0</span>
                   </div>
                   <div className="mt-2 flex justify-between border-t border-white/10 pt-2 font-medium text-white">
@@ -2853,7 +2896,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 You fund Irys directly from your wallet — no SOL goes to a platform wallet. Large
                 collections: one funding tx + one upload authorization, then the server bulk-uploads
                 with no per-file wallet popups. Keep this tab open until upload finishes.
-                No Crypgo launch fee — marketplace takes {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint (
+                No Ginger launch fee — marketplace takes {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint (
                 {PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax) and{" "}
                 {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales only.
               </p>

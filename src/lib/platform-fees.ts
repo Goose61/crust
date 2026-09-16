@@ -1,5 +1,5 @@
 /**
- * Fixed Crypgo marketplace fees (not creator-configurable).
+ * Fixed Ginger marketplace fees (not creator-configurable).
  * SlicePay / checkout processor costs are absorbed by the platform — never passed to buyers or creators.
  */
 
