@@ -8,6 +8,7 @@ import MobileHeaderLink from "../Header/Navigation/MobileHeaderLink";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/components/WalletProvider";
+import { CreatorDashboardLink } from "@/components/CreatorDashboardLink";
 import Link from "next/link";
 
 const Header: React.FC = () => {
@@ -46,6 +47,9 @@ const Header: React.FC = () => {
               setActiveHash={setActiveHash}
             />
           ))}
+          <CreatorDashboardLink
+            className="relative flex font-[family-name:var(--font-body)] text-[0.92rem] font-medium capitalize text-[var(--header-fg)] transition-all duration-300 hover:text-primary"
+          />
         </nav>
         <div className="hidden items-center gap-2.5 lg:flex">
           <Button
@@ -114,6 +118,10 @@ const Header: React.FC = () => {
                   onClick={() => setNavbarOpen(false)}
                 />
               ))}
+              <CreatorDashboardLink
+                className="text-base flex w-fit items-center py-2 text-white transition-all duration-300 hover:text-primary"
+                onNavigate={() => setNavbarOpen(false)}
+              />
               <div className="mt-4 flex w-full flex-col gap-3">
                 <Button
                   size="lg"

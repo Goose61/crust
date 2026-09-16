@@ -4,6 +4,7 @@ import { headerData } from "../Header/Navigation/menuData";
 import { footerlabels } from "@/app/api/data";
 import { Icon } from "@iconify/react";
 import Logo from "../Header/Logo";
+import { CreatorDashboardLink } from "@/components/CreatorDashboardLink";
 
 const Footer: FC = () => {
   return (
@@ -65,6 +66,9 @@ const Footer: FC = () => {
                   </Link>
                 </li>
               ))}
+              <li className="pb-4">
+                <CreatorDashboardLink className="text-17 text-foreground/60 hover:text-primary" />
+              </li>
             </ul>
           </div>
           <div className="col-span-6 md:col-span-4 lg:col-span-3">

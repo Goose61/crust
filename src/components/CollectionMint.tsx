@@ -6,7 +6,8 @@ import type { Collection, GeneratedToken } from "@/lib/types";
 import { useWallet, networkName } from "./WalletProvider";
 import { explorerClusterQuery } from "@/lib/solana-config";
 import { isGiftBundle } from "@/lib/gift-bundle";
-import { formatUsd, formatUsdAmount, filterTokensByTrait, filterTokensByStatus, filterTokensBySearch, sortTokens, isTokenSold, nftPrice, tokenImageSrc, tokenThumbSrc, tokenName, uniqueTraitFilters, logoImageSrc, COLLECTION_GRID_PAGE_SIZE, type TokenSort, type TokenStatusFilter } from "@/lib/collection-ui";
+import { formatUsd, formatUsdAmount, filterTokensByTrait, filterTokensByStatus, filterTokensBySearch, sortTokens, isTokenSold, nftPrice, tokenImageSrc, tokenName, uniqueTraitFilters, logoImageSrc, COLLECTION_GRID_PAGE_SIZE, type TokenSort, type TokenStatusFilter } from "@/lib/collection-ui";
+import { uploadCollectionLogo } from "@/lib/upload-collection-logo";
 import { collectionMarketStats } from "@/lib/collection-stats";
 import { CollectionSocialLinks } from "@/components/CollectionSocialLinks";
 import { readJsonResponse } from "@/lib/fetch-json";
@@ -46,6 +47,8 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   const [search, setSearch] = useState("");
   const [visibleCount, setVisibleCount] = useState(COLLECTION_GRID_PAGE_SIZE);
   const [message, setMessage] = useState<string | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const pendingTokenRef = useRef<GeneratedToken | null>(null);
   const returnHandledRef = useRef(false);
@@ -67,6 +70,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   const logoSrc = logoImageSrc(collection);
   const fees = collection.fees;
   const socials = collection.socials ?? {};
+  const isCreator = Boolean(publicKey && publicKey === collection.payments.creatorWallet);
 
   const [mintBusy, setMintBusy] = useState(false);
 
@@ -486,6 +490,23 @@ export function CollectionMint({ initial }: { initial: Collection }) {
     }
   }
 
+  async function uploadLogo(file: File) {
+    if (!publicKey) {
+      await connect();
+      return;
+    }
+    setLogoBusy(true);
+    setMessage(null);
+    try {
+      const { logoUrl, collection: updated } = await uploadCollectionLogo(collection.id, file, publicKey);
+      setCollection((prev) => updated ?? { ...prev, logoUrl });
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Could not update logo");
+    } finally {
+      setLogoBusy(false);
+    }
+  }
+
   return (
     <div className="relative overflow-hidden">
       <div
@@ -535,18 +556,43 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         <div className="grid gap-0 lg:grid-cols-[1.15fr_0.85fr]">
         <div className="p-6 sm:p-8">
           <div className="flex items-start gap-5">
-            {logoSrc ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={logoSrc}
-                alt={collection.name}
-                className="h-20 w-20 shrink-0 rounded-2xl border border-white/15 object-cover sm:h-24 sm:w-24"
-              />
-            ) : (
-              <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/5 text-2xl font-bold text-white/30 sm:h-24 sm:w-24">
-                {collection.name.slice(0, 2).toUpperCase()}
-              </div>
-            )}
+            <div className="relative mb-3 shrink-0">
+              {logoSrc ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={logoSrc}
+                  alt={collection.name}
+                  className="h-20 w-20 rounded-2xl border border-white/15 object-cover sm:h-24 sm:w-24"
+                />
+              ) : (
+                <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-white/15 bg-white/5 text-2xl font-bold text-white/30 sm:h-24 sm:w-24">
+                  {collection.name.slice(0, 2).toUpperCase()}
+                </div>
+              )}
+              {isCreator && (
+                <>
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      e.target.value = "";
+                      if (file) void uploadLogo(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={logoBusy}
+                    onClick={() => logoInputRef.current?.click()}
+                    className="absolute inset-x-0 -bottom-2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-white shadow-lg disabled:opacity-60"
+                  >
+                    {logoBusy ? "Saving…" : logoSrc ? "Change" : "Add logo"}
+                  </button>
+                </>
+              )}
+            </div>
             <div className="min-w-0">
               <p className="font-[family-name:var(--font-mono)] text-[11px] tracking-[0.22em] text-white/40">
                 {collection.chain.toUpperCase()} · {collection.symbol}
@@ -698,7 +744,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                 <div className="relative aspect-square overflow-hidden">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={tokenThumbSrc(collection, token)}
+                    src={tokenImageSrc(collection, token)}
                     alt={tokenName(collection, token)}
                     loading={index < 8 ? "eager" : "lazy"}
                     decoding="async"

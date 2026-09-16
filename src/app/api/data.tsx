@@ -1,7 +1,5 @@
 export const footerlabels: { label: string; herf: string }[] = [
   { label: "Launch", herf: "/launch" },
-  { label: "Dashboard", herf: "/dashboard" },
-  { label: "Market", herf: "/market" },
   { label: "Market", herf: "/market" },
 ];
 

@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import type { Collection } from "@/lib/types";
-import { coverImageSrc, formatUsd, formatUsdAmount, thumbSrc } from "@/lib/collection-ui";
+import { coverImageSrc, formatUsd, formatUsdAmount } from "@/lib/collection-ui";
 import { collectionMarketStats } from "@/lib/collection-stats";
 import { isGiftBundle } from "@/lib/gift-bundle";
 
@@ -17,7 +17,7 @@ function CollectionCard({
   featured?: boolean;
 }) {
   const stats = collectionMarketStats(collection);
-  const cover = thumbSrc(coverImageSrc(collection), featured ? 900 : 560);
+  const cover = coverImageSrc(collection);
   const href = `/collection/${collection.slug || collection.id}`;
 
   if (featured) {
