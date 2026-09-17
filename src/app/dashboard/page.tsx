@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { Collection } from "@/lib/types";
 import { useWallet } from "@/components/WalletProvider";
@@ -18,41 +18,59 @@ export default function DashboardPage() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [logoBusyId, setLogoBusyId] = useState<string | null>(null);
+  const [loadingPublic, setLoadingPublic] = useState(true);
+  const [loadingLaunches, setLoadingLaunches] = useState(false);
+  const [launchesAuthed, setLaunchesAuthed] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const logoTargetId = useRef<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoadError(null);
-      try {
-        const publicRes = await fetch("/api/collections");
-        const publicData = await publicRes.json();
-        let next: Collection[] = publicData.collections ?? [];
-
-        if (publicKey) {
-          try {
-            const headers = await buildAuthHeaders(publicKey);
-            const authed = await fetch("/api/collections", { headers });
-            const authedData = await authed.json();
-            if (Array.isArray(authedData.collections)) next = authedData.collections;
-          } catch {
-            // Live collections still load without a signature.
-          }
-        }
-
-        if (!cancelled) setCollections(next);
-      } catch (e) {
-        if (!cancelled) {
-          setLoadError(e instanceof Error ? e.message : "Could not load collections");
-        }
-      }
+  const loadPublicCollections = useCallback(async () => {
+    setLoadingPublic(true);
+    setLoadError(null);
+    try {
+      const publicRes = await fetch("/api/collections");
+      const publicData = await publicRes.json();
+      setCollections(publicData.collections ?? []);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Could not load collections");
+    } finally {
+      setLoadingPublic(false);
     }
-    void load();
-    return () => {
-      cancelled = true;
-    };
+  }, []);
+
+  useEffect(() => {
+    void loadPublicCollections();
+  }, [loadPublicCollections]);
+
+  useEffect(() => {
+    setLaunchesAuthed(false);
   }, [publicKey]);
+
+  async function loadLaunches() {
+    if (!publicKey) {
+      await connect();
+      return;
+    }
+    setLoadingLaunches(true);
+    setLoadError(null);
+    try {
+      const headers = await buildAuthHeaders(publicKey, { force: true });
+      const authed = await fetch("/api/collections", { headers });
+      const authedData = await authed.json();
+      if (!authed.ok) {
+        throw new Error(authedData.error ?? "Could not load launches");
+      }
+      if (Array.isArray(authedData.collections)) {
+        setCollections(authedData.collections);
+      }
+      setLaunchesAuthed(true);
+    } catch (e) {
+      setLaunchesAuthed(false);
+      setLoadError(e instanceof Error ? e.message : "Could not load launches");
+    } finally {
+      setLoadingLaunches(false);
+    }
+  }
 
   const mine = useMemo(() => {
     if (!publicKey) return [];
@@ -110,14 +128,33 @@ export default function DashboardPage() {
           ? `Collections for ${publicKey.slice(0, 6)}…${publicKey.slice(-4)}`
           : "Connect the wallet you launched with to manage logos and drops."}
       </p>
-      {!publicKey && (
-        <button
-          type="button"
-          onClick={() => void connect()}
-          className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm text-white"
-        >
-          Connect wallet
-        </button>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        {!publicKey && (
+          <button
+            type="button"
+            onClick={() => void connect()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm text-white"
+          >
+            Connect wallet
+          </button>
+        )}
+        {publicKey && (
+          <button
+            type="button"
+            disabled={loadingLaunches}
+            onClick={() => void loadLaunches()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50"
+          >
+            {loadingLaunches ? "Waiting for signature…" : "Load launches"}
+          </button>
+        )}
+      </div>
+      {publicKey && (
+        <p className="mt-2 text-xs text-white/40">
+          {launchesAuthed
+            ? "Wallet signed — drafts and creator tools are unlocked for this session."
+            : "Load launches to approve the auth message in your wallet, then your drafts and logo tools appear."}
+        </p>
       )}
       {loadError && <p className="mt-4 text-sm text-primary">{loadError}</p>}
       <input
@@ -132,13 +169,17 @@ export default function DashboardPage() {
         }}
       />
 
-      {publicKey && launched.length === 0 && drafts.length === 0 && (
+      {publicKey && !loadingPublic && launched.length === 0 && drafts.length === 0 && (
         <p className="mt-8 text-sm text-white/50">
-          No launched collections for this wallet.{" "}
-          <Link href="/launch" className="text-primary hover:underline">
-            Launch one
-          </Link>
-          .
+          {launchesAuthed
+            ? <>
+                No launched collections for this wallet.{" "}
+                <Link href="/launch" className="text-primary hover:underline">
+                  Launch one
+                </Link>
+                .
+              </>
+            : "No public collections for this wallet yet. Load launches if you have drafts."}
         </p>
       )}
 
