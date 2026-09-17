@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
 import { getCollection, saveCollection } from "@/lib/store";
-import { uploadBlob } from "@/lib/blob-storage";
-import { blobLogoPath } from "@/lib/paths";
 import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
 import { toPublicCollection } from "@/lib/public-collection";
 import { isServerArweaveUploadAvailable, uploadToArweaveServer } from "@/lib/irys-server";
@@ -10,7 +7,14 @@ import { isServerArweaveUploadAvailable, uploadToArweaveServer } from "@/lib/iry
 export const runtime = "nodejs";
 
 const MAX_LOGO_BYTES = 10 * 1024 * 1024; // 10 MB
+const TARGET_LOGO_BYTES = 80 * 1024;
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
+const COMPRESS_STEPS = [
+  { size: 384, quality: 72 },
+  { size: 256, quality: 64 },
+  { size: 192, quality: 52 },
+  { size: 128, quality: 44 },
+] as const;
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -37,16 +41,13 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Logo too large (max 10 MB)" }, { status: 413 });
     }
 
-    const ext = (path.extname(file.name) || ".png").toLowerCase();
-    const safeExt = ext === ".jpg" ? ".jpeg" : ext;
     const contentType = ALLOWED_MIME.has(file.type) ? file.type : "image/png";
-
     const buf = Buffer.from(await file.arrayBuffer());
     if (!isAllowedImageMagic(buf)) {
       return NextResponse.json({ error: "Invalid image file" }, { status: 400 });
     }
 
-    const logoUrl = await persistLogo(id, buf, contentType, safeExt);
+    const logoUrl = await persistLogo(id, buf, contentType);
     const updated = await saveCollection({ ...collection, logoUrl });
     return NextResponse.json({ logoUrl, collection: toPublicCollection(updated) });
   } catch (e) {
@@ -56,62 +57,53 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 }
 
-function blobLooksSuspended(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return /vercel blob|store has been suspended|blob_read_write_token/i.test(message);
-}
-
-async function prepareLogo(
-  buf: Buffer,
-  contentType: string,
-  ext: string,
-): Promise<{ buffer: Buffer; contentType: string; ext: string }> {
-  try {
-    const sharp = (await import("sharp")).default;
-    const webp = await sharp(buf)
+async function compressLogo(buf: Buffer): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+  let last: Buffer | null = null;
+  for (const step of COMPRESS_STEPS) {
+    last = await sharp(buf, { failOn: "none" })
       .rotate()
-      .resize(512, 512, { fit: "cover" })
-      .webp({ quality: 82 })
+      .resize(step.size, step.size, { fit: "cover" })
+      .webp({ quality: step.quality })
       .toBuffer();
-    return { buffer: webp, contentType: "image/webp", ext: ".webp" };
-  } catch {
-    return { buffer: buf, contentType, ext };
+    if (last.length <= TARGET_LOGO_BYTES) return last;
   }
+  if (!last) throw new Error("Could not compress logo");
+  return last;
 }
 
-/** Prefer Irys so logos survive the suspended Vercel Blob store. */
+/**
+ * Never fund the platform Irys wallet for a logo — that wallet is nearly empty
+ * and Vercel Blob is suspended. Compress first, try leftover Irys credit, then
+ * store a data URL which always fits after compression.
+ */
 async function persistLogo(
   collectionId: string,
   buf: Buffer,
-  contentType: string,
-  ext: string,
+  _contentType: string,
 ): Promise<string> {
-  const prepared = await prepareLogo(buf, contentType, ext);
+  let prepared: Buffer;
+  try {
+    prepared = await compressLogo(buf);
+  } catch (err) {
+    console.error("[logo] compress failed", err);
+    throw new Error("Could not process that image. Try a PNG or JPEG under 2 MB.");
+  }
+
+  const contentType = "image/webp";
   if (isServerArweaveUploadAvailable()) {
     try {
-      return await uploadToArweaveServer(prepared.buffer, prepared.contentType, {
+      return await uploadToArweaveServer(prepared, contentType, {
         collectionId,
+        skipFund: true,
+        requirePosted: true,
       });
     } catch (err) {
-      console.error("[logo] Irys upload failed, trying fallback", err);
+      console.error("[logo] Irys upload skipped, storing inline", err);
     }
   }
-  try {
-    return await uploadBlob(
-      blobLogoPath(collectionId, prepared.ext),
-      prepared.buffer,
-      prepared.contentType,
-    );
-  } catch (err) {
-    if (!blobLooksSuspended(err)) throw err;
-  }
-  const b64 = prepared.buffer.toString("base64");
-  if (b64.length > 350_000) {
-    throw new Error(
-      "Could not store logo. Vercel Blob is suspended and the image is too large for inline storage.",
-    );
-  }
-  return `data:${prepared.contentType};base64,${b64}`;
+
+  return `data:${contentType};base64,${prepared.toString("base64")}`;
 }
 
 function isAllowedImageMagic(buf: Buffer): boolean {

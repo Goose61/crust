@@ -289,7 +289,13 @@ async function buildSignedDataItem(
 export async function uploadToArweaveServer(
   data: Buffer,
   contentType: string,
-  opts?: { skipFund?: boolean; collectionId?: string; paidBy?: string },
+  opts?: {
+    skipFund?: boolean;
+    collectionId?: string;
+    paidBy?: string;
+    /** If true, a failed bundler POST throws instead of returning an unverified id. */
+    requirePosted?: boolean;
+  },
 ): Promise<string> {
   const network = opts?.collectionId
     ? await resolveUploadNetwork(opts.collectionId)
@@ -303,7 +309,7 @@ export async function uploadToArweaveServer(
     const postedId = await postSignedDataItem(item.getRaw(), network, opts?.paidBy);
     return `${IRYS_GATEWAY}/${postedId || id}`;
   } catch (err) {
-    if (id) return `${IRYS_GATEWAY}/${id}`;
+    if (!opts?.requirePosted && id) return `${IRYS_GATEWAY}/${id}`;
     throw err;
   }
 }
