@@ -15,7 +15,7 @@ const Perks = () => {
               Tools that stay useful after sell-out
             </h2>
           </div>
-          <div className="mt-16 border border-white/10 grid lg:grid-cols-3 sm:grid-cols-2 py-16 gap-10 px-20 rounded-3xl sm:bg-perk bg-white/5 lg:bg-bottom bg-center bg-no-repeat">
+          <div className="mt-10 grid gap-8 rounded-3xl border border-white/10 bg-white/5 bg-center bg-no-repeat px-4 py-8 sm:mt-16 sm:grid-cols-2 sm:bg-perk sm:px-8 sm:py-16 lg:grid-cols-3 lg:bg-bottom lg:px-16">
             {perksData.map((item, index) => (
               <Card
                 key={index}

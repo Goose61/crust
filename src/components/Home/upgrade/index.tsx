@@ -11,13 +11,13 @@ const Upgrade = () => {
             <p className="font-medium text-foreground">
               Full <span className="text-primary">service list</span>
             </p>
-            <h2 className="mb-5 text-3xl font-medium text-foreground sm:text-5xl">
+            <h2 className="mb-5 text-2xl font-medium text-foreground sm:text-5xl">
               Everything you need to go live
             </h2>
             <p className="mb-7 text-lg text-white/70">
               Permanent on-chain storage, programmable fees, gift mint, and spot-price SPL payments, all without sending collectors to another marketplace.
             </p>
-            <div className="grid sm:grid-cols-2  text-nowrap gap-5">
+            <div className="grid gap-5 sm:grid-cols-2">
               {upgradeData.map((item, index) => (
                 <div key={index} className="flex gap-5">
                   <div>
@@ -42,7 +42,7 @@ const Upgrade = () => {
                 alt="Dough Boi NFT"
                 width={625}
                 height={580}
-                className="-mr-5"
+                className="h-auto w-full max-w-full object-contain"
               />
             </div>
           </div>

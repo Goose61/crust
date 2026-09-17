@@ -8,7 +8,7 @@ import { CreatorDashboardLink } from "@/components/CreatorDashboardLink";
 
 const Footer: FC = () => {
   return (
-    <footer className="bg-background pt-16">
+    <footer className="bg-background pt-10 sm:pt-16">
       <div className="container px-4">
         <div className="grid grid-cols-1 gap-6 pb-16 sm:grid-cols-11 sm:gap-12 md:gap-6 lg:gap-20">
           <div className="col-span-6 flex flex-col gap-6 md:col-span-6 lg:col-span-4">

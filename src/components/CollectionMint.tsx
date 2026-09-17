@@ -147,11 +147,13 @@ export function CollectionMint({ initial }: { initial: Collection }) {
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
-      if (!SLICEPAY_ORIGINS.some((o) => event.origin.startsWith(o.replace(/\/$/, "")))) return;
+      if (!SLICEPAY_ORIGINS.includes(event.origin)) return;
       if (!messageLooksPaid(event.data)) return;
-      const id = messageInvoiceId(event.data) ?? invoiceId;
+      const rec = event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : {};
+      const id = messageInvoiceId(event.data) ?? (rec.invoiceId != null ? String(rec.invoiceId) : null) ?? invoiceId;
       const token = pendingTokenRef.current ?? selected;
       if (!id || !token) return;
+      setInvoiceId(id);
       void completeSlicePayFlow(token, id, checkoutKind);
     };
     window.addEventListener("message", handler);
@@ -161,7 +163,8 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   useEffect(() => {
     if (returnHandledRef.current) return;
     const { invoiceId: retId, tokenId, status } = parseSlicePayReturnParams(searchParams.toString());
-    if (!retId || !searchParams.get("slicepay")) return;
+    if (!retId) return;
+    if (!searchParams.get("slicepay") && !isPaidStatus(status) && !searchParams.get("invoiceId")) return;
     returnHandledRef.current = true;
     const token =
       tokenId != null
@@ -289,6 +292,8 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         setCheckoutPending(true);
         setMessage("Complete payment in the SlicePay window. This page will update automatically.");
         openSlicePayCheckout(String(inv.checkoutUrl));
+      } else {
+        throw new Error("SlicePay did not return a checkout URL");
       }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Checkout failed");
@@ -492,7 +497,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-[26rem] bg-[radial-gradient(ellipse_at_top,rgba(226,60,47,0.14),transparent_58%)]"
       />
-    <div className="container relative mx-auto max-w-6xl px-4 py-10">
+    <div className="container relative mx-auto max-w-6xl px-4 py-6 sm:py-10">
       {isUnmintedGift && pendingOnChainToken && (
         <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -523,7 +528,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
 
       {slicePayLive === false && (
         <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-100/90">
-          SlicePay is in demo mode — add SLICEPAY_MERCHANT_ID and SLICEPAY_API_KEY to accept real payments.
+          SlicePay checkout is not live — check the merchant ID on the server.
         </div>
       )}
 
@@ -533,18 +538,18 @@ export function CollectionMint({ initial }: { initial: Collection }) {
 
       <div className="overflow-hidden rounded-3xl border border-white/12 bg-card">
         <div className="grid gap-0 lg:grid-cols-[1.15fr_0.85fr]">
-        <div className="p-6 sm:p-8">
-          <div className="flex items-start gap-5">
-            <div className="mb-3 shrink-0">
+        <div className="p-4 sm:p-8">
+          <div className="flex flex-col items-center gap-4 text-center sm:flex-row sm:items-start sm:gap-5 sm:text-left">
+            <div className="collection-logo-frame mb-0 h-28 w-28 shrink-0 rounded-2xl p-1.5 sm:h-32 sm:w-32">
               {logoSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={logoSrc}
                   alt={collection.name}
-                  className="h-20 w-20 rounded-2xl border border-white/15 object-cover sm:h-24 sm:w-24"
+                  className="collection-logo"
                 />
               ) : (
-                <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-white/15 bg-white/5 text-2xl font-bold text-white/30 sm:h-24 sm:w-24">
+                <div className="flex h-full w-full items-center justify-center text-2xl font-bold text-white/30">
                   {collection.name.slice(0, 2).toUpperCase()}
                 </div>
               )}
@@ -553,7 +558,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
               <p className="font-[family-name:var(--font-mono)] text-[11px] tracking-[0.22em] text-white/40">
                 {collection.chain.toUpperCase()} · {collection.symbol}
               </p>
-              <h1 className="mt-2 text-4xl font-bold tracking-tight text-white sm:text-5xl">{collection.name}</h1>
+              <h1 className="mt-2 break-words text-3xl font-bold tracking-tight text-white sm:text-5xl">{collection.name}</h1>
               <div className="mt-4">
                 <CollectionSocialLinks socials={socials} />
               </div>
@@ -573,7 +578,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
           </dl>
         </div>
 
-        <div className="border-t border-white/10 p-6 sm:p-8 lg:border-l lg:border-t-0">
+        <div className="border-t border-white/10 p-4 sm:p-8 lg:border-l lg:border-t-0">
           <h2 className="text-2xl">Fee structure</h2>
           <p className="mt-2 font-[family-name:var(--font-body)] text-sm text-white/50">
             Creator split locks at launch. Ginger marketplace fees are fixed and deducted before your split.
@@ -598,8 +603,8 @@ export function CollectionMint({ initial }: { initial: Collection }) {
       </div>
 
       <section className="mt-12">
-        <div className="mb-5 flex items-end justify-between gap-4 flex-wrap">
-          <h2 className="text-4xl">The collection</h2>
+        <div className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+          <h2 className="text-3xl sm:text-4xl">The collection</h2>
           <p className="font-[family-name:var(--font-mono)] text-xs text-white/50">
             {tokens.length} shown · {remaining} for sale · {soldCount} sold
           </p>
@@ -629,10 +634,10 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                 </button>
               ))}
             </div>
-            <label className="ml-auto flex items-center gap-2 text-xs text-white/50">
+            <label className="flex w-full items-center gap-2 text-xs text-white/50 sm:ml-auto sm:w-auto">
               Sort
               <select
-                className="rounded-lg border border-white/12 bg-white/5 px-2 py-1.5 text-white"
+                className="min-w-0 flex-1 rounded-lg border border-white/12 bg-white/5 px-2 py-1.5 text-white sm:flex-none"
                 value={sort}
                 onChange={(e) => setSort(e.target.value as TokenSort)}
               >
@@ -676,7 +681,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
           </p>
         ) : (
           <>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5">
           {visibleTokens.map((token, index) => {
             const sold = isTokenSold(token, collection);
             const listed = Boolean(token.listing);
@@ -743,11 +748,11 @@ export function CollectionMint({ initial }: { initial: Collection }) {
 
       {selected && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4"
           onClick={() => setSelected(null)}
         >
           <div
-            className="tile max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl"
+            className="tile max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-t-3xl sm:rounded-3xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="grid md:grid-cols-2">
@@ -763,7 +768,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                     <p className="font-[family-name:var(--font-mono)] text-[11px] text-white/40">
                       {isTokenSold(selected, collection) ? "SOLD" : "AVAILABLE"}
                     </p>
-                    <h3 className="mt-1 text-3xl font-bold text-white">{tokenName(collection, selected)}</h3>
+                    <h3 className="mt-1 break-words text-2xl font-bold text-white sm:text-3xl">{tokenName(collection, selected)}</h3>
                   </div>
                   <button onClick={() => setSelected(null)} className="text-sm text-white/50">
                     Close

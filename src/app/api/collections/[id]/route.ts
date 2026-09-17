@@ -12,7 +12,7 @@ import { fireDueMilestones } from "@/lib/milestones";
 import { applyRevealTriggers } from "@/lib/reveal";
 import { rateLimit } from "@/lib/rate-limit";
 import { readAuthHeaders, assertCreatorAuth, requireWalletAuth } from "@/lib/wallet-auth";
-import { consumePaidInvoice, verifySlicePayInvoice } from "@/lib/slicepay";
+import { consumePaidInvoice, slicePayConfigured, verifySlicePayInvoice } from "@/lib/slicepay";
 import { consumeSolSignature, verifySolPayment } from "@/lib/verify-payment";
 import { getQuote } from "@/lib/quotes";
 import { isValidSolanaAddress } from "@/lib/mint-nft";
@@ -151,7 +151,7 @@ export async function POST(req: NextRequest, { params }: Params) {
           return NextResponse.json({ error: verified.error ?? "SOL payment not verified" }, { status: 402 });
         }
       } else if (method === "demo") {
-        if (process.env.SLICEPAY_MERCHANT_ID) {
+        if (slicePayConfigured()) {
           return NextResponse.json({ error: "Demo mint disabled in production" }, { status: 400 });
         }
       } else {
@@ -365,7 +365,7 @@ export async function POST(req: NextRequest, { params }: Params) {
           return NextResponse.json({ error: verified.error ?? "Payment not verified" }, { status: 402 });
         }
       } else if (method === "demo") {
-        if (process.env.SLICEPAY_MERCHANT_ID) {
+        if (slicePayConfigured()) {
           return NextResponse.json({ error: "Demo buy disabled in production" }, { status: 400 });
         }
       } else {

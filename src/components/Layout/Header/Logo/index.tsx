@@ -9,7 +9,7 @@ const Logo: React.FC = () => {
         alt="Ginger"
         width={36}
         height={36}
-        className="h-9 w-9 rounded-full object-cover"
+        className="h-9 w-9 rounded-full object-contain"
       />
       <span className="flex min-w-0 flex-col leading-none">
         <span className="truncate font-bold text-base text-white tracking-tight sm:text-[1.1rem]">

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   fetchSlicePayStatus,
   isPaidStatus,
+  slicePayConfigured,
   syncInvoiceStatus,
 } from "@/lib/slicepay";
 
@@ -19,11 +20,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
       collectionId: synced.collectionId,
       tokenId: synced.tokenId,
       paid: isPaidStatus(synced.status),
-      demo: !process.env.SLICEPAY_MERCHANT_ID,
+      demo: !slicePayConfigured(),
     });
   }
 
-  if (process.env.SLICEPAY_MERCHANT_ID) {
+  if (slicePayConfigured()) {
     try {
       const remote = await fetchSlicePayStatus(invoiceId);
       return NextResponse.json({

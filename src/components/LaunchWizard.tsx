@@ -1786,7 +1786,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         >
           ← Back
         </button>
-        <h1 className="text-2xl font-bold text-white">
+        <h1 className="text-xl font-bold text-white sm:text-2xl">
           {mode === "ready" ? "Finished art collection" : "Layer-generated collection"}
         </h1>
       </div>
@@ -1814,7 +1814,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         </div>
       )}
 
-      <div className="mt-8 rounded-2xl border border-white/15 bg-white/5 p-6">
+      <div className="mt-8 rounded-2xl border border-white/15 bg-white/5 p-4 sm:p-6">
 
         {/* ── Layers: rarity weights ── */}
         {mode === "layers" && stepIs("Rarity") && collection && (
@@ -2307,13 +2307,13 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             <div>
               <span className="mb-2 block text-sm text-white/60">Logo image</span>
               <label className="inline-flex cursor-pointer items-center gap-3">
-                <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-white/5">
+                <div className="collection-logo-frame flex h-20 w-20 items-center justify-center overflow-hidden rounded-xl">
                   {logoPreview ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={logoPreview} alt="Logo" className="h-full w-full object-cover" />
+                    <img src={logoPreview} alt="Logo" className="collection-logo p-1" />
                   ) : collection.logoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={collection.logoUrl} alt="Logo" className="h-full w-full object-cover" />
+                    <img src={collection.logoUrl} alt="Logo" className="collection-logo p-1" />
                   ) : (
                     <span className="text-xs text-white/30">Pick image</span>
                   )}

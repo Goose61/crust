@@ -6,9 +6,9 @@ const Platform = () => {
   return (
     <section className="relative pt-12 sm:pt-24 md:pt-28">
       <div className="container px-4">
-        <div className="bg-section/10 px-16 py-14 rounded-3xl border-2 border-border grid grid-cols-12 items-center before:content-[''] before:absolute relative before:w-96 before:h-64 before:bg-start before:bg-no-repeat before:-bottom-6 overflow-hidden lg:before:right-0 before:-z-1 before:opacity-10 ">
+        <div className="bg-section/10 relative grid grid-cols-12 items-center overflow-hidden rounded-3xl border-2 border-border px-4 py-8 before:absolute before:-bottom-6 before:-z-1 before:h-64 before:w-96 before:bg-start before:bg-no-repeat before:opacity-10 before:content-[''] sm:px-8 sm:py-14 lg:px-16 lg:before:right-0">
           <div className="lg:col-span-8 col-span-12">
-            <h2 className="mb-6 text-3xl text-foreground sm:text-[40px]">
+            <h2 className="mb-6 text-2xl text-foreground sm:text-3xl sm:text-[40px]">
               Prove the stack with your own collection
             </h2>
             <p className="text-lg text-white/70">

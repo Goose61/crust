@@ -28,7 +28,7 @@ const Header: React.FC = () => {
 
   return (
     <header
-      className="sticky top-0 isolate z-50 min-h-[64px] w-full backdrop-blur-[14px] sm:min-h-[72px]"
+      className="sticky top-0 isolate z-50 min-h-[64px] w-full pt-[env(safe-area-inset-top)] backdrop-blur-[14px] sm:min-h-[72px]"
       style={{
         borderBottom: "1px solid var(--header-border)",
         background: "var(--header-bg)",
@@ -103,7 +103,7 @@ const Header: React.FC = () => {
           </SheetTrigger>
           <SheetContent
             side="right"
-            className="w-full max-w-xs border-l border-white/20 bg-[#0a0908] p-0"
+            className="w-full max-w-[min(20rem,100vw)] border-l border-white/20 bg-[#0a0908] p-0"
           >
             <div className="flex items-center justify-between p-4">
               <Logo />

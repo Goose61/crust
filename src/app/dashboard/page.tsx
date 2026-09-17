@@ -121,8 +121,8 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="container mx-auto max-w-4xl px-4 py-12 pt-12">
-      <h1 className="text-3xl text-white">Creator dashboard</h1>
+    <main className="container mx-auto max-w-4xl px-4 py-8 sm:py-12">
+      <h1 className="text-2xl text-white sm:text-3xl">Creator dashboard</h1>
       <p className="mt-2 text-sm text-white/50">
         {publicKey
           ? `Collections for ${publicKey.slice(0, 6)}…${publicKey.slice(-4)}`
@@ -237,8 +237,10 @@ function DashboardRow({
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/15 bg-card p-4">
       <div className="flex min-w-0 items-center gap-3">
         {logo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={logo} alt="" className="h-14 w-14 rounded-xl object-cover" />
+          <div className="collection-logo-frame h-14 w-14 shrink-0 rounded-xl p-1">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={logo} alt="" className="collection-logo" />
+          </div>
         ) : (
           <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-xs text-white/35">
             {c.name.slice(0, 2).toUpperCase()}

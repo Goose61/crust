@@ -1,7 +1,9 @@
 import { getDb } from "./db";
 import { isPaidStatus, PAID_STATUSES } from "./slicepay-shared";
+import { getSlicePayMerchantId, SLICEPAY_API_BASE } from "./slicepay-config";
 
 export { isPaidStatus, PAID_STATUSES };
+export { slicePayConfigured } from "./slicepay-config";
 
 export type StoredInvoice = {
   invoiceId: string;
@@ -69,7 +71,7 @@ export async function fetchSlicePayStatus(invoiceId: string): Promise<{
   amountUsd?: number;
   raw: Record<string, unknown>;
 }> {
-  const merchantId = process.env.SLICEPAY_MERCHANT_ID;
+  const merchantId = getSlicePayMerchantId();
   if (!merchantId) {
     const stored = await getStoredInvoice(invoiceId);
     return {
@@ -80,7 +82,7 @@ export async function fetchSlicePayStatus(invoiceId: string): Promise<{
   }
 
   const res = await fetch(
-    `https://api.slicechain.io/api/gateway/payment-status/${encodeURIComponent(invoiceId)}`,
+    `${SLICEPAY_API_BASE}/payment-status/${encodeURIComponent(invoiceId)}`,
   );
   if (!res.ok) {
     throw new Error("Could not fetch payment status");
@@ -117,7 +119,7 @@ export async function verifySlicePayInvoice(
     if (isPaidStatus(stored.status)) return { ok: true };
   }
 
-  const merchantId = process.env.SLICEPAY_MERCHANT_ID;
+  const merchantId = getSlicePayMerchantId();
   if (!merchantId) {
     if (!invoiceId.startsWith("demo_")) {
       return { ok: false, error: "Payment provider not configured" };
@@ -137,6 +139,18 @@ export async function verifySlicePayInvoice(
       Math.abs(Number(remote.amountUsd) - expectedAmountUsd) > 0.01
     ) {
       return { ok: false, error: "Paid amount mismatch" };
+    }
+    const remoteOrder = String(remote.raw.orderId ?? remote.raw.order_id ?? stored?.orderId ?? "");
+    if (remoteOrder && !remoteOrder.startsWith(expectedOrderPrefix)) {
+      return { ok: false, error: "Invoice order mismatch" };
+    }
+    if (!stored) {
+      await storeInvoice({
+        invoiceId,
+        amountUsd: expectedAmountUsd,
+        orderId: remoteOrder || `${expectedOrderPrefix}verified`,
+        status: "paid",
+      });
     }
     await markInvoicePaid(invoiceId);
     return { ok: true };
@@ -185,10 +199,6 @@ export async function syncInvoiceStatus(invoiceId: string): Promise<StoredInvoic
   } catch {
     return stored;
   }
-}
-
-export function slicePayConfigured(): boolean {
-  return !!(process.env.SLICEPAY_MERCHANT_ID && process.env.SLICEPAY_API_KEY);
 }
 
 export function slicePayWebhookSecret(): string | undefined {

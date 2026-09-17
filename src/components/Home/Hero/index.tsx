@@ -22,12 +22,12 @@ const Hero = () => {
   };
 
   return (
-    <section className="relative overflow-hidden py-16 md:py-24" id="main-banner">
+    <section className="relative overflow-hidden py-10 md:py-24" id="main-banner">
       <div className="container">
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-2">
           <motion.div {...leftAnimation} className="flex flex-col items-center gap-10 lg:items-start">
             <div className="flex flex-col gap-4 text-center lg:text-left">
-              <h1 className="text-4xl font-medium text-white sm:text-5xl md:text-6xl xl:text-[72px]">
+              <h1 className="text-3xl font-medium text-white sm:text-5xl md:text-6xl xl:text-[72px]">
                 Launch, mint, and trade without leaving home.
               </h1>
               <p className="text-white/70">

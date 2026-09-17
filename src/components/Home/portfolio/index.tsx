@@ -7,7 +7,7 @@ const Portfolio = () => {
   return (
     <section className='pt-12' id='portfolio'>
       <div className='container px-4 sm:px-6'>
-        <div className='grid lg:grid-cols-2 items-center gap-20'>
+        <div className='grid items-center gap-10 lg:grid-cols-2 lg:gap-20'>
           <motion.div
             whileInView={{ y: 0, opacity: 1 }}
             initial={{ y: '-100%', opacity: 0 }}
@@ -33,7 +33,7 @@ const Portfolio = () => {
               <p className="font-medium text-foreground">
                 Services on <span className="text-primary">this market</span>
               </p>
-              <h2 className="mb-4 text-3xl font-medium text-foreground sm:text-5xl">
+              <h2 className="mb-4 text-2xl font-medium text-foreground sm:text-5xl">
                 From first ZIP to secondary trade
               </h2>
             </div>

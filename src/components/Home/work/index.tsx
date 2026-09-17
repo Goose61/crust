@@ -57,7 +57,7 @@ const Work = () => {
               <p className="font-medium text-foreground">
                 Why this <span className="text-primary">marketplace</span>
               </p>
-              <h2 className="text-3xl font-medium text-foreground sm:text-5xl md:w-70% lg:w-full">
+              <h2 className="text-2xl font-medium text-foreground sm:text-5xl md:w-70% lg:w-full">
                 Advantages nobody else ships together
               </h2>
             </div>

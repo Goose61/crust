@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { storeInvoice, slicePayConfigured } from "@/lib/slicepay";
+import {
+  extractSlicePayInvoiceId,
+  getSlicePayApiKey,
+  getSlicePayMerchantId,
+  SLICEPAY_API_BASE,
+  slicePayCheckoutInvoiceUrl,
+  slicePayHostedCheckoutUrl,
+} from "@/lib/slicepay-config";
 
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0] ?? "unknown";
@@ -10,38 +18,55 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const merchantId = process.env.SLICEPAY_MERCHANT_ID;
-  const apiKey = process.env.SLICEPAY_API_KEY;
+  const merchantId = getSlicePayMerchantId();
+  const apiKey = getSlicePayApiKey();
   const amountUsd = Number(body.amountUsd ?? 0);
-  const orderId = String(body.orderId ?? `mint-${Date.now()}`);
-  const description = String(body.description ?? "NFT mint");
+  const orderId = String(body.orderId ?? `mint-${Date.now()}`).slice(0, 128);
+  const description = String(body.description ?? "NFT mint").slice(0, 500);
   const redirectUrl = String(body.redirectUrl ?? "");
   const collectionId = body.collectionId ? String(body.collectionId) : undefined;
   const tokenId = body.tokenId != null ? Number(body.tokenId) : undefined;
   const payerWallet = body.payerWallet ? String(body.payerWallet) : undefined;
   const kind = body.kind === "secondary_buy" ? "secondary_buy" : "primary_mint";
 
-  if (amountUsd <= 0) {
-    return NextResponse.json({ error: "amountUsd must be greater than 0" }, { status: 400 });
+  if (!(amountUsd >= 0.01)) {
+    return NextResponse.json({ error: "amountUsd must be at least $0.01" }, { status: 400 });
+  }
+  if (!merchantId) {
+    return NextResponse.json({ error: "SlicePay merchant ID is not configured" }, { status: 503 });
   }
 
-  if (merchantId && apiKey) {
-    const res = await fetch("https://api.slicechain.io/api/gateway/create-invoice", {
+  const hostedUrl = slicePayHostedCheckoutUrl({
+    merchantId,
+    amountUsd,
+    orderId,
+    description,
+    redirectUrl,
+  });
+
+  const invoicePayload: Record<string, unknown> = {
+    merchantId,
+    amountUsd,
+    amount: amountUsd,
+    orderId,
+    description,
+    redirectUrl,
+  };
+  if (apiKey) invoicePayload.apiKey = apiKey;
+
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    const res = await fetch(`${SLICEPAY_API_BASE}/create-invoice`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        merchantId,
-        amountUsd,
-        orderId,
-        description,
-        redirectUrl,
-        apiKey,
-      }),
+      headers,
+      body: JSON.stringify(invoicePayload),
     });
-    const data = (await res.json()) as Record<string, unknown>;
-    if (res.ok && data.invoiceId) {
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const invoiceId = extractSlicePayInvoiceId(data);
+    if (res.ok && invoiceId) {
       await storeInvoice({
-        invoiceId: String(data.invoiceId),
+        invoiceId,
         amountUsd,
         orderId,
         status: "waiting",
@@ -50,22 +75,22 @@ export async function POST(req: NextRequest) {
         payerWallet,
         kind,
       });
-    }
-    return NextResponse.json(
-      {
-        ...data,
+      return NextResponse.json({
+        invoiceId,
         configured: true,
         checkoutUrl:
-          data.checkoutUrl ??
-          `https://pay.slicechain.io/?invoiceId=${encodeURIComponent(String(data.invoiceId ?? ""))}`,
-      },
-      { status: res.status },
-    );
+          typeof data.checkoutUrl === "string" && data.checkoutUrl
+            ? data.checkoutUrl
+            : slicePayCheckoutInvoiceUrl(invoiceId),
+      });
+    }
+    console.error("[slicepay] create-invoice failed, using hosted checkout", res.status, data);
+  } catch (err) {
+    console.error("[slicepay] create-invoice error, using hosted checkout", err);
   }
 
-  const invoiceId = `demo_${crypto.randomUUID()}`;
   await storeInvoice({
-    invoiceId,
+    invoiceId: `order:${orderId}`,
     amountUsd,
     orderId,
     status: "waiting",
@@ -74,13 +99,11 @@ export async function POST(req: NextRequest) {
     payerWallet,
     kind,
   });
+
   return NextResponse.json({
-    invoiceId,
-    checkoutUrl: `https://pay.slicechain.io/?invoiceId=${invoiceId}`,
-    demo: true,
-    configured: false,
-    message:
-      "SlicePay credentials not set. Demo invoice created. See .env.example for SLICEPAY_MERCHANT_ID and SLICEPAY_API_KEY.",
+    orderId,
+    configured: true,
+    checkoutUrl: hostedUrl,
   });
 }
 

@@ -6,15 +6,16 @@ const TARGET_BYTES = 80 * 1024;
 const SIZES = [384, 256, 192, 128] as const;
 const QUALITIES = [0.72, 0.6, 0.48, 0.36];
 
-function coverDraw(
+function containDraw(
   ctx: CanvasRenderingContext2D,
   bitmap: ImageBitmap,
   size: number,
 ) {
-  const scale = Math.max(size / bitmap.width, size / bitmap.height);
+  ctx.fillStyle = "#161311";
+  ctx.fillRect(0, 0, size, size);
+  const scale = Math.min(size / bitmap.width, size / bitmap.height);
   const w = bitmap.width * scale;
   const h = bitmap.height * scale;
-  ctx.clearRect(0, 0, size, size);
   ctx.drawImage(bitmap, (size - w) / 2, (size - h) / 2, w, h);
 }
 
@@ -39,7 +40,7 @@ export async function compressLogoForUpload(file: File): Promise<File> {
     for (const size of SIZES) {
       canvas.width = size;
       canvas.height = size;
-      coverDraw(ctx, bitmap, size);
+      containDraw(ctx, bitmap, size);
       for (const quality of QUALITIES) {
         const blob = await canvasToJpeg(canvas, quality);
         best = blob;

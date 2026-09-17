@@ -477,7 +477,7 @@ export default function GiftPage() {
   return (
     <main className="container mx-auto max-w-3xl px-4 py-12">
       <p className="font-[family-name:var(--font-mono)] text-[11px] tracking-[0.22em] text-white/50">1 / 1</p>
-      <h1 className="mt-2 text-5xl md:text-7xl">Gift a $PIZZA NFT</h1>
+      <h1 className="mt-2 text-3xl sm:text-5xl md:text-7xl">Gift a $PIZZA NFT</h1>
       <p className="mt-4 max-w-xl text-sm leading-6 text-white/50">
         Drop a PNG or JPEG, pick a recipient, and send a 1/1 $PIZZA gift NFT.
         You pay all fees from your wallet — the recipient gets it for free.

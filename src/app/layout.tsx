@@ -26,6 +26,12 @@ const mono = IBM_Plex_Mono({
   weight: ["400", "500"],
 });
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover" as const,
+};
+
 export const metadata: Metadata = {
   title: "Ginger · NFT marketplace",
   description:

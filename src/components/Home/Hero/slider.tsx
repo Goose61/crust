@@ -24,12 +24,12 @@ const CardSlider = () => {
   };
 
   return (
-    <div className="flex flex-col gap-10 pt-14">
-      <div className="flex flex-col items-center justify-center gap-3 text-center">
+    <div className="flex flex-col gap-8 pt-10 sm:gap-10 sm:pt-14">
+      <div className="flex flex-col items-center justify-center gap-3 px-1 text-center">
         <p className="font-medium text-foreground">
           Featured <span className="text-primary">artwork</span>
         </p>
-        <h2 className="text-3xl font-medium text-foreground sm:text-5xl">
+        <h2 className="text-2xl font-medium text-foreground sm:text-5xl">
           Dough Boi NFTs on this marketplace
         </h2>
       </div>

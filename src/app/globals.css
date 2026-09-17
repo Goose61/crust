@@ -87,7 +87,7 @@
   --gold: #f5c542;
   --flour: #fff8ee;
   --lime: #7cff4a;
-  --nav-h: 72px;
+  --nav-h: 64px;
   --radius: 0.625rem;
   --tile-radius: 1rem;
   --hairline: 1px;
@@ -155,8 +155,38 @@
 
 @layer utilities {
   .container {
-    @apply mx-auto w-full max-w-8xl px-5 py-0 sm:px-7;
+    @apply mx-auto w-full max-w-8xl px-4 py-0 sm:px-7;
   }
+}
+
+@media (min-width: 640px) {
+  :root {
+    --nav-h: 72px;
+  }
+}
+
+html,
+body {
+  overflow-x: clip;
+  max-width: 100%;
+}
+
+.collection-logo-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgb(255 255 255 / 0.05);
+  border: 1px solid rgb(255 255 255 / 0.15);
+}
+
+.collection-logo {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: center;
 }
 
 html {
