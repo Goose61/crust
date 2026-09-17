@@ -6,15 +6,9 @@ import { isServerArweaveUploadAvailable, uploadToArweaveServer } from "@/lib/iry
 
 export const runtime = "nodejs";
 
-const MAX_LOGO_BYTES = 10 * 1024 * 1024; // 10 MB
-const TARGET_LOGO_BYTES = 80 * 1024;
+const MAX_LOGO_BYTES = 10 * 1024 * 1024; // 10 MB inbound
+const MAX_STORED_BYTES = 120 * 1024;
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
-const COMPRESS_STEPS = [
-  { size: 384, quality: 72 },
-  { size: 256, quality: 64 },
-  { size: 192, quality: 52 },
-  { size: 128, quality: 44 },
-] as const;
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -41,10 +35,16 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Logo too large (max 10 MB)" }, { status: 413 });
     }
 
-    const contentType = ALLOWED_MIME.has(file.type) ? file.type : "image/png";
+    const contentType = ALLOWED_MIME.has(file.type) ? file.type : "image/jpeg";
     const buf = Buffer.from(await file.arrayBuffer());
     if (!isAllowedImageMagic(buf)) {
       return NextResponse.json({ error: "Invalid image file" }, { status: 400 });
+    }
+    if (buf.length > MAX_STORED_BYTES) {
+      return NextResponse.json(
+        { error: "Logo is still too large after compression. Try a simpler square PNG or JPEG." },
+        { status: 413 },
+      );
     }
 
     const logoUrl = await persistLogo(id, buf, contentType);
@@ -57,43 +57,18 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 }
 
-async function compressLogo(buf: Buffer): Promise<Buffer> {
-  const sharp = (await import("sharp")).default;
-  let last: Buffer | null = null;
-  for (const step of COMPRESS_STEPS) {
-    last = await sharp(buf, { failOn: "none" })
-      .rotate()
-      .resize(step.size, step.size, { fit: "cover" })
-      .webp({ quality: step.quality })
-      .toBuffer();
-    if (last.length <= TARGET_LOGO_BYTES) return last;
-  }
-  if (!last) throw new Error("Could not compress logo");
-  return last;
-}
-
 /**
- * Never fund the platform Irys wallet for a logo — that wallet is nearly empty
- * and Vercel Blob is suspended. Compress first, try leftover Irys credit, then
- * store a data URL which always fits after compression.
+ * Browser already resized the file. Do not use sharp (native bindings fail on
+ * this Vercel runtime) and do not fund the empty platform Irys wallet.
  */
 async function persistLogo(
   collectionId: string,
   buf: Buffer,
-  _contentType: string,
+  contentType: string,
 ): Promise<string> {
-  let prepared: Buffer;
-  try {
-    prepared = await compressLogo(buf);
-  } catch (err) {
-    console.error("[logo] compress failed", err);
-    throw new Error("Could not process that image. Try a PNG or JPEG under 2 MB.");
-  }
-
-  const contentType = "image/webp";
   if (isServerArweaveUploadAvailable()) {
     try {
-      return await uploadToArweaveServer(prepared, contentType, {
+      return await uploadToArweaveServer(buf, contentType, {
         collectionId,
         skipFund: true,
         requirePosted: true,
@@ -102,8 +77,7 @@ async function persistLogo(
       console.error("[logo] Irys upload skipped, storing inline", err);
     }
   }
-
-  return `data:${contentType};base64,${prepared.toString("base64")}`;
+  return `data:${contentType};base64,${buf.toString("base64")}`;
 }
 
 function isAllowedImageMagic(buf: Buffer): boolean {
