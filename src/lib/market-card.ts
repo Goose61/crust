@@ -19,6 +19,7 @@ export type MarketCard = {
 };
 
 export function toMarketCard(collection: Collection): MarketCard {
+  const tokens = collection.tokens ?? [];
   return {
     id: collection.id,
     slug: collection.slug,
@@ -31,8 +32,7 @@ export function toMarketCard(collection: Collection): MarketCard {
     coverSrc: coverImageSrc(collection),
     stats: collectionMarketStats(collection),
     hasListings:
-      Boolean(collection.secondaryEnabled) &&
-      collection.tokens.some((t) => Boolean(t.listing)),
+      Boolean(collection.secondaryEnabled) && tokens.some((t) => Boolean(t.listing)),
   };
 }
 
@@ -47,7 +47,15 @@ export function partitionMarketCards(collections: Collection[]): {
   secondary: MarketCard[];
   giftBundle?: MarketCard;
 } {
-  const live = collections.filter(isMarketLiveCard).map(toMarketCard);
+  const live: MarketCard[] = [];
+  for (const collection of collections) {
+    try {
+      if (!isMarketLiveCard(collection)) continue;
+      live.push(toMarketCard(collection));
+    } catch (err) {
+      console.error("[market-card] skipped collection", collection.id, err);
+    }
+  }
   const secondary = live.filter((card) => card.hasListings);
   const giftBundle = live.find((card) => card.kind === "gift_bundle");
   return { live, secondary, giftBundle };

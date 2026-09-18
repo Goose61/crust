@@ -13,7 +13,7 @@ export type OverallRarityFilter = "all" | OverallRarity;
 export function nftPrice(collection: Collection, token: GeneratedToken): number {
   let price = collection.payments.basePriceUsd;
   if (!collection.traitPricing) return price;
-  for (const attr of token.attributes) {
+  for (const attr of token.attributes ?? []) {
     const tp = collection.traitPricing[attr.trait_type];
     if (tp) {
       const vp = tp[String(attr.value)];
@@ -66,21 +66,21 @@ export function tokenThumbSrc(collection: Collection, token: GeneratedToken, wid
 export function coverImageSrc(collection: Collection) {
   const logo = logoImageSrc(collection);
   if (logo) return logo;
+  const tokens = collection.tokens ?? [];
   if (isGiftBundle(collection)) {
-    const latest = [...collection.tokens]
-      .reverse()
-      .find((t) => t.imageUri);
+    const latest = [...tokens].reverse().find((t) => t.imageUri);
     if (latest) return tokenImageSrc(collection, latest);
   }
-  const token = collection.tokens[0];
+  const token = tokens[0];
   if (!token) return "/images/dough/pixel-slice.webp";
   return tokenImageSrc(collection, token);
 }
 
 export function isTokenSold(token: GeneratedToken, collection: Collection) {
   if (token.owner || token.reservedBy) return true;
-  if (collection.tokens.some((t) => t.owner)) return false;
-  const ordered = [...collection.tokens].sort((a, b) => a.tokenId - b.tokenId);
+  const tokens = collection.tokens ?? [];
+  if (tokens.some((t) => t.owner)) return false;
+  const ordered = [...tokens].sort((a, b) => a.tokenId - b.tokenId);
   const index = ordered.findIndex((t) => t.tokenId === token.tokenId);
   return index >= 0 && index < collection.mintedCount;
 }
@@ -132,7 +132,7 @@ export function filterTokensByTrait(
   if (Object.keys(filters).length === 0) return tokens;
   return tokens.filter((token) =>
     Object.entries(filters).every(([traitType, value]) =>
-      token.attributes.some(
+      (token.attributes ?? []).some(
         (a) => a.trait_type === traitType && String(a.value) === value,
       ),
     ),
@@ -214,8 +214,8 @@ export function sortTokens(
 
 export function uniqueTraitFilters(collection: Collection) {
   const map = new Map<string, Set<string>>();
-  for (const t of collection.tokens) {
-    for (const a of t.attributes) {
+  for (const t of collection.tokens ?? []) {
+    for (const a of t.attributes ?? []) {
       if (a.trait_type === "Rarity Rank") continue;
       if (!map.has(a.trait_type)) map.set(a.trait_type, new Set());
       map.get(a.trait_type)!.add(String(a.value));

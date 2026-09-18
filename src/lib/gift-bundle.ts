@@ -15,7 +15,7 @@ export function isStandaloneGiftRecord(collection: Collection): boolean {
   return (
     collection.payments.giftMintEnabled &&
     collection.supply === 1 &&
-    collection.tokens[0]?.dna === "gift"
+    collection.tokens?.[0]?.dna === "gift"
   );
 }
 
@@ -51,7 +51,7 @@ export function findGiftToken(
 }
 
 export function giftDisplayNameFromToken(token: GeneratedToken): string {
-  const note = token.attributes.find((a) => a.trait_type === "Note")?.value;
+  const note = (token.attributes ?? []).find((a) => a.trait_type === "Note")?.value;
   if (typeof note === "string" && note.trim()) {
     return note.trim().slice(0, 32);
   }

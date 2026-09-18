@@ -27,25 +27,29 @@ export function collectionVolumeUsd(collection: Collection): number {
 }
 
 export function collectionFloorUsd(collection: Collection): number {
-  const listed = collection.tokens
+  const tokens = collection.tokens ?? [];
+  const listed = tokens
     .filter((t) => t.listing && t.listing.priceUsd > 0)
     .map((t) => t.listing!.priceUsd);
   if (listed.length > 0) return Math.min(...listed);
 
-  const unsoldPrices = collection.tokens
+  const unsoldPrices = tokens
     .filter((t) => !isTokenSold(t, collection))
     .map((t) => nftPrice(collection, t));
   if (unsoldPrices.length > 0) return Math.min(...unsoldPrices);
 
-  return Math.max(0, collection.payments.basePriceUsd);
+  return Math.max(0, collection.payments?.basePriceUsd ?? 0);
 }
 
 export function collectionListedCount(collection: Collection): number {
-  return collection.tokens.filter((t) => Boolean(t.listing)).length;
+  return (collection.tokens ?? []).filter((t) => Boolean(t.listing)).length;
 }
 
 export function collectionSoldCount(collection: Collection): number {
-  return collection.tokens.filter((t) => isTokenSold(t, collection)).length;
+  if (typeof collection.mintedCount === "number" && collection.mintedCount >= 0) {
+    return collection.mintedCount;
+  }
+  return (collection.tokens ?? []).filter((t) => isTokenSold(t, collection)).length;
 }
 
 export function collectionMarketStats(collection: Collection): CollectionMarketStats {
