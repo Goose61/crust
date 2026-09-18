@@ -23,7 +23,7 @@ export function CreatorDashboardLink({
       return;
     }
     let cancelled = false;
-    fetch("/api/collections")
+    fetch("/api/collections?view=nav")
       .then((r) => r.json())
       .then((d: { collections?: { status?: string; payments?: { creatorWallet?: string } }[] }) => {
         if (cancelled) return;

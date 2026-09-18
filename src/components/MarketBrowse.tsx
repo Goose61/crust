@@ -2,10 +2,8 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import type { Collection } from "@/lib/types";
-import { coverImageSrc, formatUsd, formatUsdAmount } from "@/lib/collection-ui";
-import { collectionMarketStats } from "@/lib/collection-stats";
-import { isGiftBundle } from "@/lib/gift-bundle";
+import { formatUsd, formatUsdAmount } from "@/lib/collection-ui";
+import type { MarketCard } from "@/lib/market-card";
 
 type Tab = "mints" | "secondary";
 
@@ -13,11 +11,10 @@ function CollectionCard({
   collection,
   featured = false,
 }: {
-  collection: Collection;
+  collection: MarketCard;
   featured?: boolean;
 }) {
-  const stats = collectionMarketStats(collection);
-  const cover = coverImageSrc(collection);
+  const { stats, coverSrc } = collection;
   const href = `/collection/${collection.slug || collection.id}`;
 
   if (featured) {
@@ -29,7 +26,7 @@ function CollectionCard({
         <div className="relative flex aspect-[4/3] items-center justify-center bg-white/5 md:aspect-auto md:min-h-[340px]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={cover}
+            src={coverSrc}
             alt={collection.name}
             className="h-full w-full object-contain p-4 transition duration-500 group-hover:scale-[1.03]"
           />
@@ -63,7 +60,7 @@ function CollectionCard({
       <div className="relative flex aspect-square items-center justify-center overflow-hidden bg-white/5 p-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={cover}
+          src={coverSrc}
           alt={collection.name}
           loading="lazy"
           decoding="async"
@@ -77,7 +74,7 @@ function CollectionCard({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="truncate text-lg font-semibold text-white">{collection.name}</h3>
-            {isGiftBundle(collection) ? (
+            {collection.kind === "gift_bundle" ? (
               <p className="mt-1 text-xs text-white/45">
                 {collection.mintedCount} gift{collection.mintedCount === 1 ? "" : "s"} minted
               </p>
@@ -123,9 +120,9 @@ export function MarketBrowse({
   secondary,
   giftBundle,
 }: {
-  live: Collection[];
-  secondary: Collection[];
-  giftBundle?: Collection;
+  live: MarketCard[];
+  secondary: MarketCard[];
+  giftBundle?: MarketCard;
 }) {
   const [tab, setTab] = useState<Tab>("mints");
   const items = tab === "mints" ? live : secondary;

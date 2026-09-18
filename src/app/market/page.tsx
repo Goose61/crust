@@ -1,25 +1,16 @@
-import { listCollections } from "@/lib/store";
-import { toPublicCollection } from "@/lib/public-collection";
-import { isGiftBundle, isStandaloneGiftRecord } from "@/lib/gift-bundle";
+import { unstable_cache } from "next/cache";
+import { listCollectionsForMarket } from "@/lib/store";
+import { partitionMarketCards } from "@/lib/market-card";
 import { MarketBrowse } from "@/components/MarketBrowse";
 
-export const dynamic = "force-dynamic";
+const getMarketCards = unstable_cache(
+  async () => partitionMarketCards(await listCollectionsForMarket()),
+  ["market-cards"],
+  { revalidate: 30 },
+);
 
 export default async function MarketPage() {
-  const all = (await listCollections()).map(toPublicCollection);
-  const live = all.filter((c) => {
-    if (c.status !== "live" && c.status !== "sold_out") return false;
-    if (isStandaloneGiftRecord(c)) return false;
-    return true;
-  });
-  const secondary = all.filter(
-    (c) =>
-      c.secondaryEnabled &&
-      !isStandaloneGiftRecord(c) &&
-      c.tokens.some((t) => t.listing),
-  );
-
-  const giftBundle = live.find((c) => isGiftBundle(c));
+  const { live, secondary, giftBundle } = await getMarketCards();
 
   return (
     <main className="relative overflow-hidden">

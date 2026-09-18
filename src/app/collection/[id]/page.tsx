@@ -24,21 +24,28 @@ export default async function CollectionPage({
     notFound();
   }
 
-  // Heal false mint state when Phantom returned a signature but tx never landed.
-  for (const t of collection.tokens) {
-    const sig = txSignatureFromMintUrl(t.mintTxUrl);
-    if (!sig || !t.owner) continue;
-    const verified = await verifyMintTransaction(sig, getSolanaNetwork());
-    if (!verified.ok) {
-      await resetStaleMintState(collection.id, t.tokenId);
-      collection = (await getCollection(id)) ?? collection;
-      break;
+  // Only heal in-flight reserved mints. Verifying every sold token on each page
+  // load hammers RPC and blocks navigation back to Market.
+  const pending = collection.tokens.find((t) => t.reservedBy && !t.owner);
+  if (pending) {
+    const sig = txSignatureFromMintUrl(pending.mintTxUrl);
+    if (sig) {
+      const verified = await verifyMintTransaction(sig, getSolanaNetwork());
+      if (!verified.ok && /not found/i.test(verified.reason)) {
+        await resetStaleMintState(collection.id, pending.tokenId);
+        collection = (await getCollection(id)) ?? collection;
+      }
     }
   }
 
+  const publicCollection = toPublicCollection({
+    ...collection,
+    layers: [],
+  });
+
   return (
     <Suspense fallback={<div className="container mx-auto px-4 py-20 text-white/50">Loading…</div>}>
-      <CollectionMint initial={toPublicCollection(collection)} />
+      <CollectionMint initial={publicCollection} />
     </Suspense>
   );
 }

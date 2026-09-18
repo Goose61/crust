@@ -14,6 +14,61 @@ export async function listCollections(): Promise<Collection[]> {
   return docs.map(asCollection);
 }
 
+/** Header “Dashboard” link — tiny projection, no tokens. */
+export async function listCollectionNav(): Promise<
+  { id: string; status: Collection["status"]; payments: { creatorWallet?: string } }[]
+> {
+  const col = await getCollectionsCol();
+  const docs = await col
+    .find(
+      {},
+      {
+        projection: {
+          _id: 0,
+          id: 1,
+          status: 1,
+          "payments.creatorWallet": 1,
+        },
+      },
+    )
+    .toArray();
+  return docs.map((doc) => ({
+    id: doc.id,
+    status: doc.status,
+    payments: { creatorWallet: doc.payments?.creatorWallet },
+  }));
+}
+
+/**
+ * Live market listing docs without layers / trait payloads.
+ * Token attributes are the bulk of a 600-piece collection.
+ */
+export async function listCollectionsForMarket(): Promise<Collection[]> {
+  const col = await getCollectionsCol();
+  const docs = await col
+    .find(
+      { status: { $in: ["live", "sold_out"] } },
+      {
+        projection: {
+          _id: 0,
+          layers: 0,
+          pendingMint: 0,
+          pendingCoreCollection: 0,
+          pendingZipUrl: 0,
+          launchDraft: 0,
+          holderSnapshots: 0,
+          importProgress: 0,
+          "tokens.attributes": 0,
+          "tokens.sidecar": 0,
+          "tokens.metadataUri": 0,
+          "tokens.metadataRelPath": 0,
+        },
+      },
+    )
+    .toArray();
+  return docs.map(asCollection);
+}
+
 export async function getCollection(id: string): Promise<Collection | null> {
   const col = await getCollectionsCol();
   const doc = await col.findOne(

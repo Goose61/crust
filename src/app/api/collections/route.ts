@@ -1,16 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCollection, listCollections, saveCollection, slugify } from "@/lib/store";
+import { getCollection, listCollectionNav, listCollections, saveCollection, slugify } from "@/lib/store";
 import { rateLimit } from "@/lib/rate-limit";
 import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
-import { filterCollectionsForViewer, toPublicCollection } from "@/lib/public-collection";
+import { filterCollectionsForViewer, toPublicCollection, toPublicListCollection } from "@/lib/public-collection";
 import type { Collection } from "@/lib/types";
 
 export async function GET(req: NextRequest) {
   try {
+    const view = req.nextUrl.searchParams.get("view");
+    if (view === "nav") {
+      return NextResponse.json({ collections: await listCollectionNav() });
+    }
     const auth = readAuthHeaders(req);
     const collections = await listCollections();
+    const wallet = auth?.wallet;
     return NextResponse.json({
-      collections: filterCollectionsForViewer(collections, auth?.wallet),
+      collections: filterCollectionsForViewer(collections, wallet).map((c) =>
+        toPublicListCollection(c, {
+          includeArt:
+            Boolean(wallet) &&
+            c.payments.creatorWallet === wallet &&
+            (c.status === "draft" || c.status === "importing"),
+        }),
+      ),
     });
   } catch (e) {
     console.error("[GET /api/collections]", e);

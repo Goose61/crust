@@ -247,7 +247,7 @@ function DashboardRow({
   onCollectionUpdate?: (collection: Collection) => void;
 }) {
   const logo = logoImageSrc(c);
-  const canGift = c.status === "live" && giftableTokens(c).length > 0;
+  const canGift = c.status === "live";
   const [giftOpen, setGiftOpen] = useState(false);
   return (
     <div className="rounded-2xl border border-white/15 bg-card p-4">
@@ -328,11 +328,31 @@ function GiftNftPanel({
   onCollectionUpdate: (collection: Collection) => void;
 }) {
   const { publicKey, connect, signMintTx } = useWallet();
-  const unsold = useMemo(() => giftableTokens(collection), [collection]);
-  const [tokenId, setTokenId] = useState(String(unsold[0]?.tokenId ?? ""));
+  const [detail, setDetail] = useState(collection);
+  const unsold = useMemo(() => giftableTokens(detail), [detail]);
+  const [tokenId, setTokenId] = useState("");
   const [recipient, setRecipient] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingTokens, setLoadingTokens] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingTokens(true);
+    void fetch(`/api/collections/${encodeURIComponent(collection.id)}`)
+      .then((r) => r.json())
+      .then((d: { collection?: Collection }) => {
+        if (cancelled || !d.collection) return;
+        setDetail(d.collection);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoadingTokens(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [collection.id]);
 
   useEffect(() => {
     if (!unsold.some((t) => String(t.tokenId) === tokenId)) {
@@ -378,7 +398,14 @@ function GiftNftPanel({
         error?: string;
       }>(res);
       if (!res.ok) throw new Error(data.error ?? "Could not gift NFT");
-      if (data.collection) onCollectionUpdate(data.collection);
+      if (data.collection) {
+        setDetail(data.collection);
+        onCollectionUpdate({
+          ...collection,
+          mintedCount: data.collection.mintedCount,
+          status: data.collection.status,
+        });
+      }
 
       if (data.requiresOnChainMint) {
         setMessage("Approve the free mint in your wallet (recipient pays nothing)…");
@@ -395,7 +422,14 @@ function GiftNftPanel({
         });
         const confirmed = await readJsonResponse<{ collection?: Collection; error?: string }>(confirm);
         if (!confirm.ok) throw new Error(confirmed.error ?? "Could not confirm gift mint");
-        if (confirmed.collection) onCollectionUpdate(confirmed.collection);
+        if (confirmed.collection) {
+          setDetail(confirmed.collection);
+          onCollectionUpdate({
+            ...collection,
+            mintedCount: confirmed.collection.mintedCount,
+            status: confirmed.collection.status,
+          });
+        }
         setMessage(`Gifted #${id} to ${recipientAddr.slice(0, 4)}…${recipientAddr.slice(-4)}`);
       } else {
         setMessage(`Gifted #${id} to ${recipientAddr.slice(0, 4)}…${recipientAddr.slice(-4)}`);
@@ -406,6 +440,10 @@ function GiftNftPanel({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (loadingTokens) {
+    return <p className="mt-3 text-xs text-white/45">Loading NFTs…</p>;
   }
 
   if (unsold.length === 0) {
@@ -430,7 +468,7 @@ function GiftNftPanel({
         >
           {unsold.slice(0, 400).map((token) => (
             <option key={token.tokenId} value={token.tokenId}>
-              #{token.tokenId} · {tokenName(collection, token)}
+              #{token.tokenId} · {tokenName(detail, token)}
             </option>
           ))}
         </select>
