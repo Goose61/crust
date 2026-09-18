@@ -34,7 +34,7 @@ const Work = () => {
     },
     {
       icon: "/images/chooseus/chooseus-icon-1.svg",
-      text: "Permanent Arweave storage + locked, immutable fee splits",
+      text: "Permanent storage + locked, immutable fee splits",
     },
     {
       icon: "/images/chooseus/chooseus-icon-2.svg",

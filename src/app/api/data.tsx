@@ -44,7 +44,7 @@ export const pricedata: {
 export const portfolioData: { image: string; title: string }[] = [
   {
     image: "/images/portfolio/portfolio-icon-1.svg",
-    title: "Launch from a ZIP — no JSON required",
+    title: "Launch from a ZIP — we handle metadata",
   },
   {
     image: "/images/portfolio/portfolio-icon-2.svg",
@@ -57,7 +57,7 @@ export const portfolioData: { image: string; title: string }[] = [
 ];
 
 export const upgradeData: { title: string }[] = [
-  { title: "Permanent Arweave storage" },
+  { title: "Permanent storage" },
   { title: "Blind mint + timed reveal" },
   { title: "Gift unminted pieces from the dashboard" },
   { title: "Live SOL quotes for USD prices" },
@@ -102,7 +102,7 @@ export const timelineData: {
   {
     icon: "/images/timeline/icon-planning.svg",
     title: "Upload",
-    text: "Drop a ZIP of finished images. We write Metaplex metadata for you.",
+    text: "Drop a ZIP of finished images. We fill in NFT details for you.",
     position: "md:top-0 md:left-0",
   },
   {

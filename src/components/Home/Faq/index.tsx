@@ -20,9 +20,9 @@ const faqData = [
       "Any collection you own. The main path is a ZIP of finished images. Optional generative trait-layer ZIPs are still available in the launch wizard. Set metadata, fees, and a USD mint price, then go live.",
   },
   {
-    question: "Do I need to write metadata JSON?",
+    question: "Do I need to write metadata myself?",
     answer:
-      "No. Finished-image ZIPs can include sidecar JSON, but you can also set name, description, symbol, and royalties in the wizard. We write Metaplex metadata and compute overall rarity ranks from traits.",
+      "No. You can include metadata files in your ZIP, or set name, description, symbol, and royalties in the wizard. We fill in the rest and compute overall rarity ranks from traits.",
   },
   {
     question: "How do collectors pay?",
@@ -32,7 +32,7 @@ const faqData = [
   {
     question: "Where is the art stored?",
     answer:
-      "Images and metadata publish permanently to Arweave via Irys when you click Go live. You pay storage from your connected wallet. Until then, files stay in your browser so you can preview the launch.",
+      "Images and metadata are published permanently when you click Go live. You pay storage from your connected wallet. Until then, files stay in your browser so you can preview the launch.",
   },
   {
     question: "What happens after a collection sells out?",

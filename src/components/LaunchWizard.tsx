@@ -1313,7 +1313,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       };
 
       if (alreadyOnArweave) {
-        setGoLivePhase("Arweave upload already complete — finishing on-chain launch…");
+        setGoLivePhase("Upload already complete — finishing launch…");
         const tokens: Record<number, { imageUri: string; metadataUri: string }> = {};
         for (const t of tokenList) {
           tokens[t.tokenId] = {
@@ -1328,16 +1328,16 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       } else {
         if (useServerBulk) {
           setGoLivePhase(
-            `Step 1/2 — Fund Irys (~${estimate.walletPaymentSol.toFixed(4)} SOL) from your wallet…`,
+            `Step 1/2 — Pay for storage (~${estimate.walletPaymentSol.toFixed(4)} SOL) from your wallet…`,
           );
           await fundCreatorIrysForBytes({
             network,
             totalBytes,
             onFundNeeded: () => {
-              setGoLivePhase("Approve Irys storage funding in your wallet…");
+              setGoLivePhase("Approve storage payment in your wallet…");
             },
           });
-          setGoLivePhase("Step 2/2 — Authorize bulk upload (one signature, no per-file approvals)…");
+          setGoLivePhase("Step 2/2 — Authorize upload (one signature)…");
           await ensureCreatorIrysUploadDelegate({
             network,
             delegateAddress: estimate.uploadDelegateAddress!,
@@ -1348,11 +1348,11 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           });
         } else {
           setGoLivePhase(
-            `Funding Arweave storage (~${estimate.walletPaymentSol.toFixed(4)} SOL to Irys) — approve in your wallet…`,
+            `Paying for storage (~${estimate.walletPaymentSol.toFixed(4)} SOL) — approve in your wallet…`,
           );
         }
 
-        setGoLivePhase("Uploading to Arweave — keep this tab open…");
+        setGoLivePhase("Uploading your collection — keep this tab open…");
 
         uploaded = useServerBulk
           ? await uploadCollectionViaServer({
@@ -1385,11 +1385,11 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               existingProgress: existingProgress?.completed,
               existingLogoUri: existingProgress?.logoUri,
               onFundNeeded: () => {
-                setGoLivePhase("Approve Irys storage payment in your wallet…");
+                setGoLivePhase("Approve storage payment in your wallet…");
               },
               onProgress: (p) => {
                 if (p.phase === "funding") {
-                  setGoLivePhase("Approve Irys storage payment in your wallet…");
+                  setGoLivePhase("Approve storage payment in your wallet…");
                 } else if (p.phase === "uploading-logo") {
                   setArweaveUploadDetail("Uploading logo…");
                 } else {
@@ -1413,7 +1413,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
           return { tokenId: t.tokenId, imageUri: u.imageUri, metadataUri: u.metadataUri };
         });
 
-        setGoLivePhase("Saving permanent URIs…");
+        setGoLivePhase("Saving your collection files…");
         current = await patchCollectionUris(publicKey, current.id, {
           tokens: uriRows,
           logoUrl: uploaded.logoUri,
@@ -1573,7 +1573,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         <h1 className="text-3xl font-bold text-white">Launch a collection</h1>
         <p className="mt-2 text-sm text-white/60">
           Connect your wallet first. Finished-art ZIPs are parsed in your browser — nothing is
-          uploaded until you go live and pay Arweave storage (and an optional $50 Market feature)
+          uploaded until you go live and pay storage (and an optional $50 Market feature)
           from that wallet.
         </p>
 
@@ -1601,7 +1601,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               <strong className="text-white/90">sign a short message</strong> (starts with{" "}
               &quot;Dough Boi Auth&quot;). This proves you own the wallet — it does{" "}
               <strong className="text-white/90">not</strong> move SOL or charge fees. One signature
-              is cached for about {Math.round(AUTH_TTL_MS / 60000)} minutes. Arweave storage is only
+              is cached for about {Math.round(AUTH_TTL_MS / 60000)} minutes. Storage is only
               paid when you click Go live.
             </p>
           </div>
@@ -1922,14 +1922,14 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             <div>
               <h2 className="text-lg font-semibold text-white">Metadata review</h2>
               <p className="mt-1 text-sm text-white/60">
-                Sidecar JSON is display data. Phantom groups NFTs from the on-chain Core collection created at go-live — not from these files. Confirm royalty bps, creators, and symbol here before continuing.
+                Confirm names, royalties, creators, and symbol before continuing. Wallets group NFTs from the collection created at go-live.
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
                 ["NFTs", String(metadataReview.tokenCount)],
-                ["Sidecar JSON", String(metadataReview.sidecarCount)],
+                ["Metadata files", String(metadataReview.sidecarCount)],
                 ["Unique bps", metadataReview.uniqueBps.length ? metadataReview.uniqueBps.join(", ") : "—"],
                 ["Creator sets", String(metadataReview.uniqueCreatorSets.length || 0)],
               ].map(([label, value]) => (
@@ -1975,7 +1975,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 <div>
                   <h3 className="text-sm font-medium text-white">Edit NFT metadata</h3>
                   <p className="mt-1 text-xs text-white/50">
-                    Names and royalty bps below are written into each NFT&apos;s Arweave JSON at go-live.
+                    Names and royalties below are saved with each NFT at go-live.
                     Use Apply changes to all NFTs to save NFT-level edits.
                   </p>
                 </div>
@@ -2095,7 +2095,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                         <td className="px-3 py-2">{s.symbol || "—"}</td>
                         <td className="px-3 py-2">{s.sellerFeeBps ?? "—"}</td>
                         <td className="max-w-[14rem] truncate px-3 py-2 font-mono text-[10px]">
-                          {s.creators?.map((c) => `${c.address.slice(0, 4)}…${c.share}`).join(", ") || (s.sidecarPresent ? "—" : "no JSON")}
+                          {s.creators?.map((c) => `${c.address.slice(0, 4)}…${c.share}`).join(", ") || (s.sidecarPresent ? "—" : "no file")}
                         </td>
                         <td className="px-3 py-2">{s.traitCount}</td>
                       </tr>
@@ -2141,7 +2141,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                   />
                 </Field>
                 <div className="flex items-end gap-3">
-                  <label className="text-sm text-white/70">Secondary royalty (Metaplex)</label>
+                  <label className="text-sm text-white/70">Secondary royalty</label>
                   <div className="flex items-center gap-1">
                     <input
                       type="number"
@@ -2167,7 +2167,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 />
               </Field>
 
-              <p className="mb-2 mt-4 text-xs text-white/50">Metaplex royalty creators (max 5, shares must sum to 100)</p>
+              <p className="mb-2 mt-4 text-xs text-white/50">Royalty recipients (max 5, shares must sum to 100)</p>
               <div className="space-y-2">
                 {editorCreators(collection).map((row, idx) => (
                   <div key={idx} className="flex flex-wrap items-center gap-2">
@@ -2240,7 +2240,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               <div className="mt-5 border-t border-white/10 pt-4">
                 <div className="mb-3 flex items-center gap-1 text-sm font-medium text-white">
                   Royalty destination split
-                  <Info tip="Used when building metadata creator rows if you leave Metaplex creators empty, and for off-chain fee routing. When creator addresses are filled in above, those addresses are written on-chain instead." />
+                  <Info tip="Used when building royalty recipients if you leave the list empty, and for fee routing. When creator addresses are filled in above, those addresses are used instead." />
                 </div>
                 <p className="mb-2 text-xs text-white/50">Distribute royalties to:</p>
                 <div className="space-y-3">
@@ -2339,7 +2339,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                 Apply changes to all NFTs
               </button>
               {collection.metadataConfirmed && (
-                <p className="mt-2 text-xs text-emerald-400">Collection-wide metadata confirmed. Mixed sidecar values will not block go-live.</p>
+                <p className="mt-2 text-xs text-emerald-400">Collection-wide metadata confirmed. Mixed values will not block go-live.</p>
               )}
             </div>
           </div>
@@ -2880,7 +2880,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               <h3 className="mb-3 text-sm font-semibold text-white">Launch costs</h3>
               {!publicKey ? (
                 <p className="text-sm text-white/50">
-                  Connect your creator wallet to see exact Arweave storage costs for this collection.
+                  Connect your creator wallet to see exact storage costs for this collection.
                 </p>
               ) : launchCostsLoading ? (
                 <p className="text-sm text-white/50">Calculating storage from your uploaded assets…</p>
@@ -2896,7 +2896,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                   </div>
                   <div className="flex justify-between gap-4 text-white/70">
                     <span>
-                      Irys / Arweave storage ({collection.tokens.length} NFTs ·{" "}
+                      Permanent storage ({collection.tokens.length} NFTs ·{" "}
                       {formatLaunchBytes(launchCosts.totalBytes)})
                     </span>
                     <span className="shrink-0 text-right">
@@ -2907,19 +2907,19 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                     </span>
                   </div>
                   <div className="flex justify-between text-white/60">
-                    <span>Irys bundler buffer (+10%)</span>
+                    <span>Storage buffer (+10%)</span>
                     <span className="shrink-0 text-right">
                       {formatSolAmount(launchCosts.irysBundlerBufferSol)} SOL
                     </span>
                   </div>
                   <div className="flex justify-between text-white/70">
-                    <span>→ Fund Irys from your wallet</span>
+                    <span>→ Storage from your wallet</span>
                     <span className="shrink-0 text-right">
                       {formatSolAmount(launchCosts.irysTotalSol)} SOL
                     </span>
                   </div>
                   <div className="flex justify-between text-white/70">
-                    <span>Solana gas (Irys funding tx)</span>
+                    <span>Network fee</span>
                     <span className="shrink-0 text-right">
                       {formatSolAmount(launchCosts.gasSol)} SOL
                     </span>
@@ -2980,9 +2980,9 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
               ) : null}
               <p className="mt-3 text-[11px] text-white/35">
                 No Ginger launch fee unless you add Featured Market (+${FEATURE_ON_MARKET_USD}).
-                You fund Irys directly from your wallet — storage SOL does not go to Ginger.
-                Large collections: one funding tx + one upload authorization, then the server
-                bulk-uploads with no per-file wallet popups. Keep this tab open until upload finishes.
+                Storage is paid from your wallet — that SOL does not go to Ginger.
+                Large collections: one storage payment and one upload approval, then we handle the rest.
+                Keep this tab open until upload finishes.
                 Marketplace takes {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint (
                 {PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax) and{" "}
                 {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales.
@@ -3043,7 +3043,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
             <button disabled={busy || !checklist.every((c) => c.ok)} onClick={() => void goLive()}
               className="w-full rounded-xl bg-primary py-3.5 text-sm font-semibold text-white disabled:opacity-40">
               {busy
-                ? goLivePhase ?? "Uploading to Arweave & going live…"
+                ? goLivePhase ?? "Uploading & going live…"
                 : "🚀 Go live (pay storage from wallet)"}
             </button>
             <p className="text-center text-xs text-white/35">

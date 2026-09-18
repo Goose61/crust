@@ -81,7 +81,7 @@ export async function assertCollectionArweaveStoragePaid(params: {
   const serverNetwork = params.network ?? getSolanaNetwork();
   const platform = getPlatformPublicKey();
   if (!platform) {
-    throw new Error("Bulk Arweave upload is not available on this deployment.");
+    throw new Error("Bulk upload is not available on this deployment.");
   }
 
   const existing = await col.findOne({ collectionId: params.collectionId });

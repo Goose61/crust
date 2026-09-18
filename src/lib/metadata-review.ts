@@ -143,14 +143,14 @@ export function reviewCollectionMetadata(collection: Collection): MetadataReview
     issues.push({
       severity: "warning",
       code: "partial-sidecars",
-      message: `${missingSidecarCount} of ${tokens.length} images have no paired sidecar JSON (${idList}). Each image needs a .json with the same number/name, or re-upload the ZIP after fixing the mismatch.`,
+      message: `${missingSidecarCount} of ${tokens.length} images have no paired metadata file (${idList}). Each image needs a .json with the same number/name, or re-upload the ZIP after fixing the mismatch.`,
     });
   }
   if (tokens.length > 0 && missingSidecarCount === tokens.length) {
     issues.push({
       severity: "warning",
       code: "no-sidecars",
-      message: "No sidecar JSON found. Royalty and creator fields will use the values you set below.",
+      message: "No metadata files found. Royalty and creator fields will use the values you set below.",
     });
   }
   const jsonCount = collection.sidecarJsonCount ?? sidecars.length;
@@ -201,7 +201,7 @@ export function reviewCollectionMetadata(collection: Collection): MetadataReview
     issues.push({
       severity: "error",
       code: "too-many-creators",
-      message: `Metaplex Core supports at most ${MAX_CREATORS} royalty creators.`,
+      message: `You can list at most ${MAX_CREATORS} royalty recipients.`,
     });
   }
   const shareSum = creators.reduce((sum, c) => sum + Number(c.share || 0), 0);
@@ -242,13 +242,13 @@ export function reviewCollectionMetadata(collection: Collection): MetadataReview
     issues.push({
       severity: "error",
       code: "name-length",
-      message: `Collection name is ${collection.name.length} characters. Core on-chain names max out at ${CORE_NAME_MAX}.`,
+      message: `Collection name is ${collection.name.length} characters. Wallet names max out at ${CORE_NAME_MAX}.`,
     });
   } else if (longNames.length > 0) {
     issues.push({
       severity: "warning",
       code: "token-name-length",
-      message: `${longNames.length} NFT names exceed ${CORE_NAME_MAX} characters (Core on-chain limit). They will be truncated at mint.`,
+      message: `${longNames.length} NFT names exceed ${CORE_NAME_MAX} characters. They will be shortened at mint.`,
     });
   }
 

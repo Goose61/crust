@@ -67,7 +67,7 @@ export function CollectionUploadProgressOverlay({
         <p className="mt-4 text-xs leading-relaxed text-white/40">
           {phase === "uploading"
             ? "Large ZIPs upload directly to storage first — keep this tab open until processing starts."
-            : "Almost done. We are extracting images, uploading to blob storage, and creating your collection draft."}
+            : "Almost done. We are extracting images, uploading your files, and creating your collection draft."}
         </p>
       </div>
     </div>

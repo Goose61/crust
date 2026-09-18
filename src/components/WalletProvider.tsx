@@ -180,13 +180,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         error?: string;
       }>(prep);
       if (!prep.ok) {
-        throw new Error(prepData.error ?? "Failed to prepare Core collection transaction");
+        throw new Error(prepData.error ?? "Failed to prepare collection transaction");
       }
       if (prepData.alreadyCreated && prepData.collectionAddress) {
         return { txSignature: "", collectionAddress: prepData.collectionAddress };
       }
       if (!prepData.txBase64 || !prepData.collectionAddress) {
-        throw new Error("Failed to prepare Core collection transaction");
+        throw new Error("Failed to prepare collection transaction");
       }
 
       const { VersionedTransaction } = await import("@solana/web3.js");
@@ -208,7 +208,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         collectionAddress?: string;
         error?: string;
       }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Core collection co-sign failed");
+      if (!res.ok) throw new Error(data.error ?? "Collection signing failed");
       if (!data.txSignature || !data.collectionAddress) {
         throw new Error("No transaction signature returned");
       }

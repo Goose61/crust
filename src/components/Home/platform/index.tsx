@@ -9,10 +9,10 @@ const Platform = () => {
         <div className="bg-section/10 relative grid grid-cols-12 items-center overflow-hidden rounded-3xl border-2 border-border px-4 py-8 before:absolute before:-bottom-6 before:-z-1 before:h-64 before:w-96 before:bg-start before:bg-no-repeat before:opacity-10 before:content-[''] sm:px-8 sm:py-14 lg:px-16 lg:before:right-0">
           <div className="lg:col-span-8 col-span-12">
             <h2 className="mb-6 text-2xl text-foreground sm:text-3xl sm:text-[40px]">
-              Prove the stack with your own collection
+              Launch your own collection
             </h2>
             <p className="text-lg text-white/70">
-              Connect a wallet, upload your ZIP, confirm metadata and fees, then pay Arweave storage
+              Connect a wallet, upload your ZIP, confirm metadata and fees, then pay storage
               from that wallet to go live. Mint and resale stay on this marketplace for every drop.
             </p>
           </div>

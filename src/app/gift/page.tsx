@@ -235,7 +235,7 @@ export default function GiftPage() {
   const stageLabel: Record<typeof stage, string> = {
     idle: publicKey ? "Send gift" : "Connect wallet",
     storage: "Approve storage payment in your wallet…",
-    uploading: "Uploading to Arweave — waiting for confirmation (up to 2 min)…",
+    uploading: "Uploading — waiting for confirmation (up to 2 min)…",
     building: "Preparing mint transaction…",
     minting: "Approve mint in your wallet…",
     confirming: "Confirming on-chain…",
@@ -436,7 +436,7 @@ export default function GiftPage() {
               rel="noopener noreferrer"
               className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-primary hover:border-primary/40"
             >
-              View metadata JSON on Arweave ↗
+              View metadata ↗
             </a>
           )}
           {result.imageUri && (
@@ -446,7 +446,7 @@ export default function GiftPage() {
               rel="noopener noreferrer"
               className="block rounded border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70 hover:text-white"
             >
-              View image on Arweave ↗
+              View image ↗
             </a>
           )}
           <a
@@ -501,7 +501,7 @@ export default function GiftPage() {
 
       <div className="mt-4 rounded border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60 space-y-1">
         <p className="font-medium text-white/80">What your wallet will ask you to approve</p>
-        <p>1. <span className="text-white">Storage payment</span> — funds permanent Arweave upload (one Solana transaction)</p>
+        <p>1. <span className="text-white">Storage payment</span> — funds permanent storage (one Solana transaction)</p>
         <p>2. <span className="text-white">Mint transaction</span> — creates the NFT on-chain and sends it to the recipient</p>
         <p className="text-white/40 pt-1">Upload steps may also show message signature prompts (no extra SOL).</p>
       </div>

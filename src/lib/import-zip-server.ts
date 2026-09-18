@@ -40,7 +40,7 @@ export async function downloadZipToTempFile(zipUrl: string): Promise<string> {
       const { get } = await import("@vercel/blob");
       const result = await get(zipUrl, { access: "public" });
       if (!result?.stream) {
-        throw new Error("Uploaded ZIP not found in blob storage — try uploading again.");
+        throw new Error("Uploaded ZIP not found — try uploading again.");
       }
       await streamToFile(result.stream);
       return tmpPath;

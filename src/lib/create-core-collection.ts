@@ -187,7 +187,7 @@ function assertUserSignedCoreCollectionTx(
 
   const collectionPk = new PublicKey(pending.collectionAddress);
   if (!keys.some((k) => k.equals(collectionPk))) {
-    throw new Error("Transaction does not include the expected Core collection address.");
+    throw new Error("Transaction does not include the expected collection address.");
   }
 
   if (!signatureIsPresent(tx.signatures[0])) {
@@ -231,7 +231,7 @@ export async function prepareCoreCollectionTransaction(params: {
   }
 
   if (!pending.collectionSecretKeyB64) {
-    throw new Error("Pending Core collection key missing — prepare again.");
+    throw new Error("Pending collection key missing — prepare again.");
   }
 
   const built = await buildUnsignedCoreCollectionTx({
@@ -243,7 +243,7 @@ export async function prepareCoreCollectionTransaction(params: {
   });
 
   if (built.collectionAddress !== pending.collectionAddress) {
-    throw new Error("Core collection address mismatch when refreshing transaction.");
+    throw new Error("Collection address mismatch when refreshing transaction.");
   }
 
   await simulateUnsignedTransaction(built.txBase64, params.network);
@@ -265,7 +265,7 @@ export async function cosignAndSubmitCoreCollectionTransaction(params: {
   network: SolanaNetwork;
 }): Promise<string> {
   if (!params.pending.collectionSecretKeyB64) {
-    throw new Error("Missing pending Core collection key — prepare the transaction again.");
+    throw new Error("Missing pending collection key — prepare the transaction again.");
   }
 
   const rpcUrl = getDirectRpcUrl(params.network);

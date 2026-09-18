@@ -130,7 +130,7 @@ export async function patchCollectionUris(
     body: JSON.stringify(payload),
   });
   const data = await readJsonResponse<{ collection: Collection; error?: string }>(res);
-  if (!res.ok) throw new Error(data.error || "Could not save Arweave URIs");
+  if (!res.ok) throw new Error(data.error || "Could not save collection files");
   return data.collection;
 }
 

@@ -20,7 +20,7 @@ export function parseIrysAmountResponse(body: string, label = "amount"): bigint 
     try {
       parsed = JSON.parse(trimmed) as Record<string, string | number | undefined>;
     } catch {
-      throw new SyntaxError(`Cannot parse Irys ${label} JSON: ${trimmed.slice(0, 120)}`);
+      throw new SyntaxError(`Cannot parse storage ${label} JSON: ${trimmed.slice(0, 120)}`);
     }
     const value =
       parsed.balance ?? parsed.amount ?? parsed.price ?? parsed.lamports ?? parsed.value;
@@ -30,7 +30,7 @@ export function parseIrysAmountResponse(body: string, label = "amount"): bigint 
   try {
     return BigInt(trimmed);
   } catch {
-    throw new SyntaxError(`Cannot parse Irys ${label}: ${trimmed.slice(0, 120)}`);
+    throw new SyntaxError(`Cannot parse storage ${label}: ${trimmed.slice(0, 120)}`);
   }
 }
 
@@ -48,7 +48,7 @@ export async function fetchIrysAccountBalanceLamports(
     signal: AbortSignal.timeout(4_000),
   });
   if (!res.ok) {
-    throw new Error(`Could not read Irys balance (${res.status})`);
+    throw new Error(`Could not read storage balance (${res.status})`);
   }
   return parseIrysAmountResponse(await res.text(), "balance");
 }

@@ -31,7 +31,7 @@ const Hero = () => {
                 Launch, mint, and trade without leaving home.
               </h1>
               <p className="text-white/70">
-                Upload a ZIP of finished art, set a USD mint price, publish to Arweave from your
+                Upload a ZIP of finished art, set a USD mint price, publish permanently from your
                 wallet, and go live. Collectors pay with SlicePay or SOL at a live quote. Primary
                 mints and secondary listings stay on Ginger — collections never graduate away.
               </p>

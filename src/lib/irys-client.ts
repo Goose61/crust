@@ -154,13 +154,13 @@ async function submitFundTxToBundler(txId: string, devnet: boolean): Promise<voi
       res.status === 502 ||
       res.status === 503;
     if (!retryable) {
-      throw new Error(`Bundler rejected fund tx: ${res.status} ${lastError}`);
+      throw new Error(`Storage payment was rejected: ${res.status} ${lastError}`);
     }
     await new Promise<void>((r) => setTimeout(r, 2000 + attempt * 250));
   }
 
   throw new Error(
-    `Bundler could not confirm fund tx ${txId}. Your SOL may still have been sent — ` +
+    `Could not confirm storage payment ${txId}. Your SOL may still have been sent — ` +
       `save this id and retry in a minute.`,
   );
 }
@@ -168,10 +168,10 @@ async function submitFundTxToBundler(txId: string, devnet: boolean): Promise<voi
 async function fetchBundlerAddress(devnet: boolean): Promise<string> {
   const node = devnet ? IRYS_NODE_DEVNET : IRYS_NODE_MAINNET;
   const res = await fetch(`${node}/info`);
-  if (!res.ok) throw new Error(`Could not reach Irys (${res.status})`);
+  if (!res.ok) throw new Error(`Could not reach storage (${res.status})`);
   const info = (await res.json()) as { addresses?: { solana?: string } };
   const address = info.addresses?.solana;
-  if (!address) throw new Error("Irys bundler address not found");
+  if (!address) throw new Error("Could not start storage payment");
   return address;
 }
 
@@ -665,7 +665,7 @@ export async function uploadCollectionViaServer(params: {
       error?: string;
       tokens?: Record<number, { imageUri: string; metadataUri: string }>;
     };
-    if (!res.ok) throw new Error(data.error || "Server Arweave upload failed");
+    if (!res.ok) throw new Error(data.error || "Upload failed");
 
     for (const token of slice) {
       const row = data.tokens?.[token.tokenId];

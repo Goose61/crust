@@ -34,7 +34,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     const pending = collection.pendingCoreCollection;
     if (!pending) {
       return NextResponse.json(
-        { error: "No pending Core collection — prepare the transaction again." },
+        { error: "No pending collection — prepare the transaction again." },
         { status: 400 },
       );
     }

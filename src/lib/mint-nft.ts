@@ -206,7 +206,7 @@ function describeSimulationError(err: unknown, logs?: string[] | null): string {
     return (
       `Not enough SOL in your wallet for the mint step. ` +
       `You have ~${have.toFixed(4)} SOL but need ~${need.toFixed(4)} SOL for account rent ` +
-      `(plus tx fees). Arweave storage is charged separately first.`
+      `(plus tx fees). Storage is charged separately first.`
     );
   }
   return `Transaction would fail on-chain: ${JSON.stringify(err)}`;

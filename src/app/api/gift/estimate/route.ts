@@ -45,7 +45,7 @@ export async function GET(req: Request) {
         storage: {
           lamports: fees.storageWithBufferLamports.toString(),
           sol: fees.storageSol,
-          label: "Arweave storage (image + metadata)",
+          label: "Permanent storage (image + metadata)",
         },
         rent: {
           lamports: GIFT_MINT_RENT_LAMPORTS.toString(),
@@ -64,6 +64,6 @@ export async function GET(req: Request) {
     },
     solPrice,
     note:
-      "Arweave storage is charged first, then the mint step needs ~0.02 SOL left in your wallet for account rent.",
+      "Storage is charged first, then the mint step needs ~0.02 SOL left in your wallet for account rent.",
   });
 }

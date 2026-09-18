@@ -77,6 +77,6 @@ export function formatInsufficientBalanceMessage(params: {
   return (
     `Your wallet does not have enough SOL for this gift. You have ~${params.balanceSol.toFixed(4)} SOL ` +
     `but need ~${params.requiredSol.toFixed(4)} SOL total (~${shortfall.toFixed(4)} SOL short). ` +
-    `Arweave storage is charged first, then the mint step — keep enough for both.`
+    `Storage is charged first, then the mint step — keep enough for both.`
   );
 }

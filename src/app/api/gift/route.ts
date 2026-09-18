@@ -64,9 +64,9 @@ export async function POST(req: NextRequest) {
   if (!payer || !isValidSolanaAddress(payer))
     return NextResponse.json({ error: "Connect your wallet before sending" }, { status: 400 });
   if (!imageUri.startsWith("http") && !imageUri.startsWith("/api/"))
-    return NextResponse.json({ error: "Image must be uploaded to Arweave first" }, { status: 400 });
+    return NextResponse.json({ error: "Image must be uploaded first" }, { status: 400 });
   if (!metadataUri.startsWith("http") && !metadataUri.startsWith("/api/"))
-    return NextResponse.json({ error: "Metadata must be uploaded to Arweave first" }, { status: 400 });
+    return NextResponse.json({ error: "Metadata must be uploaded first" }, { status: 400 });
 
   const nftName = giftMintName(name);
 
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
       ? {}
       : {
           warning:
-            "Image saved to Arweave, but on-chain mint was skipped — set ARWEAVE_SOLANA_KEY on the server.",
+            "Image saved, but on-chain mint was skipped. Contact support.",
         }),
   });
 }

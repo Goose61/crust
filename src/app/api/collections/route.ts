@@ -155,7 +155,7 @@ export async function POST(req: NextRequest) {
     if (merged.clientImport) {
       if (!merged.irysPublished || !merged.tokens.every((t) => t.metadataUri?.startsWith("http"))) {
         return NextResponse.json(
-          { error: "Upload collection assets to Arweave from your wallet before go-live" },
+          { error: "Upload collection assets from your wallet before go-live" },
           { status: 400 },
         );
       }
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "On-chain Core collection not created yet. Approve the collection transaction in your wallet, then try again.",
+            "Collection not created yet. Approve the collection transaction in your wallet, then try again.",
         },
         { status: 400 },
       );

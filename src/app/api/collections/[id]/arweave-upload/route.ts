@@ -106,7 +106,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     });
   } catch (err) {
     console.error("[POST /api/collections/[id]/arweave-upload v5]", err);
-    const message = err instanceof Error ? err.message : "Arweave upload failed";
+    const message = err instanceof Error ? err.message : "Upload failed";
     const status =
       message.includes("Wallet signature required") ||
       message.includes("signature") ||

@@ -76,7 +76,7 @@ const Portfolio = () => {
               </h2>
             </div>
             <p className='text-lg text-white/70'>
-              Creators upload finished art, confirm metadata, pay Arweave storage from their wallet,
+              Creators upload finished art, confirm metadata, pay storage from their wallet,
               and go live. Collectors mint with SlicePay or SOL at a live USD quote. Dough Boi™ is
               the live collection on this market — tap a piece to open it.
             </p>

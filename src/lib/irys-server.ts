@@ -53,7 +53,7 @@ async function getIrysSigner(): Promise<IrysSigner> {
       const secret = getPlatformSecretKey();
       if (!secret) {
         throw new Error(
-          "Server Arweave upload is not configured (ARWEAVE_SOLANA_KEY). Contact support.",
+          "Upload is not configured. Contact support.",
         );
       }
       const { Keypair } = await import("@solana/web3.js");
@@ -76,10 +76,10 @@ async function signerAddress(): Promise<string> {
 
 async function fetchBundlerAddress(node: string): Promise<string> {
   const res = await fetch(`${node}/info`);
-  if (!res.ok) throw new Error(`Could not reach Irys (${res.status})`);
+  if (!res.ok) throw new Error(`Could not reach storage (${res.status})`);
   const info = (await res.json()) as { addresses?: { solana?: string } };
   const address = info.addresses?.solana;
-  if (!address) throw new Error("Irys bundler address not found");
+  if (!address) throw new Error("Could not start storage payment");
   return address;
 }
 
@@ -100,11 +100,11 @@ async function submitFundTxToBundler(txId: string, node: string): Promise<void> 
       res.status === 502 ||
       res.status === 503;
     if (!retryable) {
-      throw new Error(`Bundler rejected fund tx: ${res.status} ${lastError}`);
+      throw new Error(`Storage payment was rejected: ${res.status} ${lastError}`);
     }
     await new Promise((r) => setTimeout(r, 2000 + attempt * 250));
   }
-  throw new Error(`Bundler could not confirm fund tx ${txId}: ${lastError}`);
+  throw new Error(`Could not confirm storage payment ${txId}: ${lastError}`);
 }
 
 const TX_FEE_RESERVE_LAMPORTS = 50_000n;
@@ -166,7 +166,7 @@ export async function ensureIrysFundedForBytes(
 
   if (maxTransfer <= 0n) {
     throw new Error(
-      `Platform wallet (${address}) has insufficient SOL on ${network} to fund Irys ` +
+      `Platform wallet (${address}) has insufficient SOL on ${network} to complete storage ` +
         `(~${lamportsToSolStr(onChainLamports)} SOL on-chain; need rent reserve + tx fee). ` +
         `Confirm your storage payment used ${network} and matched the Go Live estimate.`,
     );
@@ -179,7 +179,7 @@ export async function ensureIrysFundedForBytes(
   if (toFund < deficit) {
     const bal = await getPlatformWalletBalance(network);
     throw new Error(
-      `Platform wallet (${address}) cannot fund Irys on ${network}: need ~${lamportsToSolStr(deficit)} SOL ` +
+      `Platform wallet (${address}) cannot complete storage on ${network}: need ~${lamportsToSolStr(deficit)} SOL ` +
         `but only ~${lamportsToSolStr(maxTransfer)} SOL is transferable ` +
         `(~${bal?.onChainSol.toFixed(4) ?? "0"} SOL on-chain). ` +
         `Storage payment must send SOL to ${address} on ${network} — your creator wallet balance is separate. ` +
@@ -206,9 +206,9 @@ export async function ensureIrysFundedForBytes(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Platform Irys fund tx failed on ${network}: ${message}. ` +
+      `Platform storage payment failed on ${network}: ${message}. ` +
         `Wallet ${address} has ~${(Number(onChainLamports) / LAMPORTS_PER_SOL).toFixed(4)} SOL; ` +
-        `tried to send ~${(Number(toFund) / LAMPORTS_PER_SOL).toFixed(6)} SOL to Irys.`,
+        `tried to send ~${(Number(toFund) / LAMPORTS_PER_SOL).toFixed(6)} SOL for storage.`,
     );
   }
 
@@ -217,7 +217,7 @@ export async function ensureIrysFundedForBytes(
     "confirmed",
   );
   if (confirmation.value.err) {
-    throw new Error("Platform Irys fund transaction failed on-chain");
+    throw new Error("Platform storage payment failed on-chain");
   }
 
   await submitFundTxToBundler(sig, node);
@@ -230,7 +230,7 @@ export async function ensureIrysFundedForBytes(
     const credited = await waitForIrysBalance(address, devnet, price);
     if (!credited) {
       throw new Error(
-        "Irys bundler balance not credited after fund tx — wait a minute and retry Go Live.",
+        "Storage payment not credited yet — wait a minute and retry Go Live.",
       );
     }
   }
@@ -252,13 +252,13 @@ async function postSignedDataItem(
 
   const bodyText = await res.text();
   if (res.status === 402) {
-    throw new Error(`Irys account underfunded: ${bodyText}`);
+    throw new Error(`Storage account underfunded: ${bodyText}`);
   }
   if (res.status === 201) {
-    throw new Error(bodyText || "Irys rejected upload");
+    throw new Error(bodyText || "Upload was rejected");
   }
   if (!res.ok) {
-    throw new Error(`Irys upload failed (${res.status}): ${bodyText}`);
+    throw new Error(`Upload failed (${res.status}): ${bodyText}`);
   }
 
   try {
@@ -268,7 +268,7 @@ async function postSignedDataItem(
   } catch {
     // fall through — use signed item id
   }
-  throw new Error("Irys upload succeeded but no transaction id was returned");
+  throw new Error("Upload succeeded but confirmation was missing");
 }
 
 async function buildSignedDataItem(

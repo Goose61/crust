@@ -15,7 +15,7 @@ const Upgrade = () => {
               Everything you need to go live
             </h2>
             <p className="mb-7 text-lg text-white/70">
-              Arweave storage, live SOL quotes, SlicePay checkout, dashboard gifts, and an in-ecosystem
+              Permanent storage, live SOL quotes, SlicePay checkout, dashboard gifts, and an in-ecosystem
               market — all without sending collectors somewhere else.
             </p>
             <div className="grid gap-5 sm:grid-cols-2">
