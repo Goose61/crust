@@ -15,6 +15,10 @@ export const SECONDARY_PLATFORM_FEE_PERCENT = 0.5;
 export const PRIMARY_PLATFORM_TOTAL_PERCENT =
   PRIMARY_PLATFORM_FEE_PERCENT + PRIMARY_TRADE_TAX_PERCENT;
 
+/** Optional add-on at go-live: pin the collection at the top of Market. */
+export const FEATURE_ON_MARKET_USD = 50;
+export const FEATURE_ON_MARKET_DAYS = 14;
+
 export function formatPlatformFeePercent(n: number): string {
   return n % 1 === 0 ? String(n) : n.toFixed(1).replace(/\.0$/, "");
 }

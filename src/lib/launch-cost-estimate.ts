@@ -1,6 +1,7 @@
 import { estimateArweaveBytes } from "@/lib/client-asset-store";
 import { fetchStorageEstimate } from "@/lib/client-launch-api";
 import { SOL_USD_FALLBACK } from "@/lib/price-display";
+import { FEATURE_ON_MARKET_USD } from "@/lib/platform-fees";
 import type { SolanaNetwork } from "@/lib/solana-config";
 
 export type LaunchCostEstimate = {
@@ -17,6 +18,8 @@ export type LaunchCostEstimate = {
   irysBaseUsd: number;
   totalUsd: number;
   solUsd: number;
+  featuredPayTo: string | null;
+  featuredFeeUsd: number;
 };
 
 export async function fetchLaunchCostEstimate(
@@ -41,6 +44,8 @@ export async function fetchLaunchCostEstimate(
     irysBaseUsd: est.sol * solUsd,
     totalUsd: totalSol * solUsd,
     solUsd,
+    featuredPayTo: est.featuredPayTo ?? null,
+    featuredFeeUsd: est.featuredFeeUsd ?? FEATURE_ON_MARKET_USD,
   };
 }
 

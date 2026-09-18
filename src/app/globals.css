@@ -248,7 +248,38 @@ select option {
 }
 
 .nft-card:hover {
-  border-color: rgb(255 255 255 / 0.28);
   transform: translateY(-2px);
-  box-shadow: 0 16px 36px rgb(0 0 0 / 0.32);
+}
+
+.nft-frame-legendary {
+  border-color: rgb(251 191 36 / 0.85);
+  box-shadow: 0 0 0 1px rgb(251 191 36 / 0.55), 0 0 22px rgb(251 191 36 / 0.42);
+}
+.nft-frame-legendary:hover {
+  box-shadow: 0 0 0 1px rgb(251 191 36 / 0.75), 0 0 28px rgb(251 191 36 / 0.55);
+}
+.nft-frame-epic {
+  border-color: rgb(217 70 239 / 0.85);
+  box-shadow: 0 0 0 1px rgb(217 70 239 / 0.5), 0 0 22px rgb(217 70 239 / 0.4);
+}
+.nft-frame-epic:hover {
+  box-shadow: 0 0 0 1px rgb(217 70 239 / 0.75), 0 0 28px rgb(217 70 239 / 0.55);
+}
+.nft-frame-rare {
+  border-color: rgb(14 165 233 / 0.85);
+  box-shadow: 0 0 0 1px rgb(14 165 233 / 0.5), 0 0 20px rgb(14 165 233 / 0.38);
+}
+.nft-frame-rare:hover {
+  box-shadow: 0 0 0 1px rgb(14 165 233 / 0.75), 0 0 26px rgb(14 165 233 / 0.5);
+}
+.nft-frame-uncommon {
+  border-color: rgb(16 185 129 / 0.8);
+  box-shadow: 0 0 0 1px rgb(16 185 129 / 0.45), 0 0 18px rgb(16 185 129 / 0.32);
+}
+.nft-frame-uncommon:hover {
+  box-shadow: 0 0 0 1px rgb(16 185 129 / 0.7), 0 0 24px rgb(16 185 129 / 0.45);
+}
+.nft-frame-common {
+  border-color: rgb(255 255 255 / 0.18);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 0.28);
 }

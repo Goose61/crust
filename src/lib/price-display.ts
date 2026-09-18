@@ -1,6 +1,8 @@
+import { SOL_USD_FALLBACK } from "./sol-price";
+
 export type PriceDisplayUnit = "usd" | "sol";
 
-export const SOL_USD_FALLBACK = 145;
+export { SOL_USD_FALLBACK };
 
 export function usdToSol(usd: number, solUsd = SOL_USD_FALLBACK): number {
   if (!solUsd) return 0;

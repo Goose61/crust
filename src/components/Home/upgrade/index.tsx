@@ -15,7 +15,8 @@ const Upgrade = () => {
               Everything you need to go live
             </h2>
             <p className="mb-7 text-lg text-white/70">
-              Permanent on-chain storage, programmable fees, gift mint, and spot-price SPL payments, all without sending collectors to another marketplace.
+              Arweave storage, live SOL quotes, SlicePay checkout, dashboard gifts, and an in-ecosystem
+              market — all without sending collectors somewhere else.
             </p>
             <div className="grid gap-5 sm:grid-cols-2">
               {upgradeData.map((item, index) => (

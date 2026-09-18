@@ -7,7 +7,7 @@ import { useWallet, networkName } from "./WalletProvider";
 import { explorerClusterQuery } from "@/lib/solana-config";
 import { isGiftBundle } from "@/lib/gift-bundle";
 import { formatUsd, formatUsdAmount, formatUsdAndSol, formatSol, usdToSol, filterTokensByTrait, filterTokensByStatus, filterTokensBySearch, filterTokensByRarity, sortTokens, isTokenSold, nftPrice, tokenAskPrice, tokenImageSrc, tokenName, uniqueTraitFilters, logoImageSrc, COLLECTION_GRID_PAGE_SIZE, type TokenSort, type TokenStatusFilter, type OverallRarityFilter } from "@/lib/collection-ui";
-import { OVERALL_RARITY_CLASS, OVERALL_RARITY_LABEL, OVERALL_RARITY_ORDER, rarityRankByTokenId, tokenOverallRarity, tokenRarityRank } from "@/lib/rarity";
+import { OVERALL_RARITY_CLASS, OVERALL_RARITY_FRAME, OVERALL_RARITY_LABEL, OVERALL_RARITY_ORDER, rarityRankByTokenId, tokenOverallRarity, tokenRarityRank } from "@/lib/rarity";
 import { collectionMarketStats } from "@/lib/collection-stats";
 import { CollectionSocialLinks } from "@/components/CollectionSocialLinks";
 import { readJsonResponse } from "@/lib/fetch-json";
@@ -180,6 +180,15 @@ export function CollectionMint({ initial }: { initial: Collection }) {
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, [invoiceId, selected, checkoutKind, completeSlicePayFlow]);
+
+  useEffect(() => {
+    const raw = searchParams.get("token");
+    if (!raw || searchParams.get("slicepay") || searchParams.get("invoiceId")) return;
+    const id = Number(raw);
+    if (!Number.isFinite(id)) return;
+    const token = collection.tokens.find((t) => t.tokenId === id);
+    if (token) setSelected(token);
+  }, [searchParams, collection.tokens]);
 
   useEffect(() => {
     if (returnHandledRef.current) return;
@@ -739,7 +748,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                   setInvoiceId(null);
                   setMessage(null);
                 }}
-                className="nft-card group text-left"
+                className={`nft-card group text-left ${OVERALL_RARITY_FRAME[rarity]}`}
               >
                 <div className="relative aspect-square overflow-hidden">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -750,18 +759,6 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                     decoding="async"
                     className={`h-full w-full object-cover transition duration-500 ${sold ? "grayscale" : "group-hover:scale-[1.04]"}`}
                   />
-                  <span
-                    className={`absolute left-2.5 top-2.5 rounded-full px-2 py-0.5 font-[family-name:var(--font-mono)] text-[10px] ${
-                      sold && !listed ? "bg-white text-black" : "bg-primary text-white"
-                    }`}
-                  >
-                    {sold && !listed ? "SOLD" : formatUsd(priceUsd)}
-                  </span>
-                  <span
-                    className={`absolute right-2.5 top-2.5 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${OVERALL_RARITY_CLASS[rarity]}`}
-                  >
-                    {OVERALL_RARITY_LABEL[rarity]}
-                  </span>
                 </div>
                 <div className="border-t border-white/10 px-3 py-2.5">
                   <div className="truncate text-sm font-medium text-white">
@@ -769,7 +766,20 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                   </div>
                   <div className="mt-0.5 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.12em] text-white/40">
                     #{token.tokenId}
-                    {!(sold && !listed) && solUsd && priceUsd > 0 ? ` · ${formatSol(usdToSol(priceUsd, solUsd))}` : ""}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${OVERALL_RARITY_CLASS[rarity]}`}
+                    >
+                      {OVERALL_RARITY_LABEL[rarity]}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 font-[family-name:var(--font-mono)] text-[10px] ${
+                        sold && !listed ? "bg-white text-black" : "bg-primary/90 text-white"
+                      }`}
+                    >
+                      {sold && !listed ? "SOLD" : formatUsdAndSol(priceUsd, solUsd)}
+                    </span>
                   </div>
                 </div>
               </button>

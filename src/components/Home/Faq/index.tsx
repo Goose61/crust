@@ -17,22 +17,22 @@ const faqData = [
   {
     question: "What can I launch here?",
     answer:
-      "Any collection you own. Upload trait-layer folders or a ZIP of finished images, set supply and fees, then go live. Use it as a proof of concept for your own drop.",
+      "Any collection you own. The main path is a ZIP of finished images. Optional generative trait-layer ZIPs are still available in the launch wizard. Set metadata, fees, and a USD mint price, then go live.",
   },
   {
     question: "Do I need to write metadata JSON?",
     answer:
-      "No. If you upload trait-layer folders, the platform reads the folder names as traits, composites all combinations, writes Metaplex metadata, and ranks rarity automatically. If you already have finished images, just ZIP them up and we handle the rest.",
+      "No. Finished-image ZIPs can include sidecar JSON, but you can also set name, description, symbol, and royalties in the wizard. We write Metaplex metadata and compute overall rarity ranks from traits.",
   },
   {
     question: "How do collectors pay?",
     answer:
-      "Creators can accept SOL, USDC, a custom SPL or meme coin, and SlicePay hosted checkout. Every method is quoted at the same USD mint price. There is no discount for paying in a native or meme token.",
+      "Creators can accept SlicePay (card / USDC) and SOL. Every method is quoted from a live SOL/USD rate against the same USD mint price. There is no meme-token discount.",
   },
   {
     question: "Where is the art stored?",
     answer:
-      "Images and metadata publish permanently on-chain via Arweave when a storage key is configured. Until then, files stage locally so you can preview the full launch flow.",
+      "Images and metadata publish permanently to Arweave via Irys when you click Go live. You pay storage from your connected wallet. Until then, files stay in your browser so you can preview the launch.",
   },
   {
     question: "What happens after a collection sells out?",
@@ -42,12 +42,12 @@ const faqData = [
   {
     question: "What fees does Ginger charge?",
     answer:
-      "No launch fee. Primary mints: 0.7% platform + 0.3% trade tax (1% total, deducted before your creator split). Secondary sales: 0.5%. You configure how your share splits across creator, holders, and buyback treasury. Payment processing is covered by Ginger — buyers and creators never see a checkout surcharge.",
+      "No launch fee unless you add Featured Market (+$50 for 14 days at the top of Market). Primary mints: 0.7% platform + 0.3% trade tax (1% total, deducted before your creator split). Secondary sales: 0.5%. You configure how your share splits across creator, holders, and buyback treasury. Payment processing is covered by Ginger — buyers and creators never see a checkout surcharge.",
   },
   {
     question: "Is there a gift mint or allowlist?",
     answer:
-      "Yes. Gift mint sends a piece to another wallet. Allowlist and waitlist are built into the launch checklist, and milestones can open public mint later.",
+      "Yes. After launch, the creator dashboard can gift unminted pieces to any wallet for free (you only pay on-chain rent). Allowlist and waitlist are in the launch checklist, and buyers can gift a mint when you enable that option.",
   },
 ];
 

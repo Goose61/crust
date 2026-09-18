@@ -31,9 +31,9 @@ const Hero = () => {
                 Launch, mint, and trade without leaving home.
               </h1>
               <p className="text-white/70">
-                A marketplace built for creators who want the whole stack in one place: layer
-                uploads, auto metadata, permanent on-chain storage, programmable fees, and secondary
-                listings that never graduate away.
+                Upload a ZIP of finished art, set a USD mint price, publish to Arweave from your
+                wallet, and go live. Collectors pay with SlicePay or SOL at a live quote. Primary
+                mints and secondary listings stay on Ginger — collections never graduate away.
               </p>
             </div>
             <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center sm:justify-start">

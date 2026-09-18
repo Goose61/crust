@@ -12,8 +12,8 @@ const Platform = () => {
               Prove the stack with your own collection
             </h2>
             <p className="text-lg text-white/70">
-              Upload art, set fees, go live. Primary mint and secondary listings stay on this
-              marketplace, using the same rails for every drop that follows.
+              Connect a wallet, upload your ZIP, confirm metadata and fees, then pay Arweave storage
+              from that wallet to go live. Mint and resale stay on this marketplace for every drop.
             </p>
           </div>
           <div className="lg:col-span-4 col-span-12">

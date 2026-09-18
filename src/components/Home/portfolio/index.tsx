@@ -1,9 +1,45 @@
 'use client'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import Image from 'next/image'
 import { featuredGridNfts, portfolioData } from '@/app/api/data'
 import { motion } from 'framer-motion'
 
+type FeaturedItem = {
+  tokenId: number
+  name: string
+  imageSrc: string
+  href: string
+}
+
+const fallbackItems: FeaturedItem[] = featuredGridNfts.map((src, index) => {
+  const id = Number(src.match(/(\d+)\.jpeg$/)?.[1] ?? index + 1)
+  return {
+    tokenId: id,
+    name: `Dough Boi #${id}`,
+    imageSrc: src,
+    href: `/collection/dough-boi?token=${id}`,
+  }
+})
+
 const Portfolio = () => {
+  const [items, setItems] = useState<FeaturedItem[]>(fallbackItems)
+
+  useEffect(() => {
+    let cancelled = false
+    void fetch('/api/featured-art')
+      .then((r) => r.json())
+      .then((data: { tokens?: FeaturedItem[] }) => {
+        if (!cancelled && data.tokens && data.tokens.length > 0) {
+          setItems(data.tokens.slice(0, 4))
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   return (
     <section className='pt-12' id='portfolio'>
       <div className='container px-4 sm:px-6'>
@@ -13,15 +49,17 @@ const Portfolio = () => {
             initial={{ y: '-100%', opacity: 0 }}
             transition={{ duration: 0.6 }}
             className='grid grid-cols-2 gap-4'>
-            {featuredGridNfts.map((src) => (
-              <Image
-                key={src}
-                src={src}
-                alt='Dough Boi NFT'
-                width={360}
-                height={360}
-                className='aspect-square w-full rounded-2xl object-cover'
-              />
+            {items.map((nft) => (
+              <Link key={nft.tokenId} href={nft.href} className='block'>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={nft.imageSrc}
+                  alt={nft.name}
+                  width={360}
+                  height={360}
+                  className='aspect-square w-full rounded-2xl object-cover transition hover:brightness-110'
+                />
+              </Link>
             ))}
           </motion.div>
 
@@ -34,13 +72,13 @@ const Portfolio = () => {
                 Services on <span className="text-primary">this market</span>
               </p>
               <h2 className="mb-4 text-2xl font-medium text-foreground sm:text-5xl">
-                From first ZIP to secondary trade
+                From ZIP upload to secondary trade
               </h2>
             </div>
             <p className='text-lg text-white/70'>
-              Creators get a compositor, rarity ranks, quotes, gift mint, and a native market.
-              Collectors get one place to mint and resell. Dough Boi™ art is the visual language.
-              Your collection is the proof it works.
+              Creators upload finished art, confirm metadata, pay Arweave storage from their wallet,
+              and go live. Collectors mint with SlicePay or SOL at a live USD quote. Dough Boi™ is
+              the live collection on this market — tap a piece to open it.
             </p>
 
             <table className='w-full sm:w-[80%] mt-10'>

@@ -4,6 +4,11 @@ import { rateLimit } from "@/lib/rate-limit";
 import { readAuthHeaders, assertCreatorAuth } from "@/lib/wallet-auth";
 import { filterCollectionsForViewer, toPublicCollection, toPublicListCollection } from "@/lib/public-collection";
 import type { Collection } from "@/lib/types";
+import { getQuote } from "@/lib/quotes";
+import { verifySolPayment, consumeSolSignature } from "@/lib/verify-payment";
+import { getPlatformPublicKey } from "@/lib/platform-key";
+import { parseNetwork } from "@/lib/solana-config";
+import { FEATURE_ON_MARKET_DAYS, FEATURE_ON_MARKET_USD } from "@/lib/platform-fees";
 
 export async function GET(req: NextRequest) {
   try {
@@ -38,7 +43,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many requests" }, { status: 429 });
   }
 
-  const body = (await req.json()) as Partial<Collection> & { action?: string };
+  const body = (await req.json()) as Partial<Collection> & {
+    action?: string;
+    featureOnMarket?: boolean;
+    featuredTxSignature?: string;
+    network?: string;
+  };
   if (!body.id) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
@@ -60,11 +70,19 @@ export async function POST(req: NextRequest) {
     pendingMint: _pendingMint,
     pendingZipUrl: _pendingZipUrl,
     tokens: _tokens,
+    featuredUntil: _featuredUntil,
+    featureOnMarket: _featureOnMarket,
+    featuredTxSignature: _featuredTxSignature,
+    network: _network,
     ...safeBody
   } = body;
   void _pendingMint;
   void _pendingZipUrl;
   void _tokens;
+  void _featuredUntil;
+  void _featureOnMarket;
+  void _featuredTxSignature;
+  void _network;
 
   const merged: Collection = {
     ...existing,
@@ -168,6 +186,36 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+
+    if (body.featureOnMarket) {
+      const payTo = getPlatformPublicKey();
+      const signature = String(body.featuredTxSignature || "").trim();
+      if (payTo) {
+        if (!signature) {
+          return NextResponse.json(
+            { error: "Featured Market listing requires a $50 SOL payment" },
+            { status: 402 },
+          );
+        }
+        const quote = await getQuote(FEATURE_ON_MARKET_USD);
+        const network = parseNetwork(body.network);
+        const verified = await verifySolPayment(signature, payTo, quote.sol, network);
+        if (!verified.ok) {
+          return NextResponse.json(
+            { error: verified.error ?? "Featured listing payment not verified" },
+            { status: 402 },
+          );
+        }
+        const consumed = await consumeSolSignature(signature);
+        if (!consumed.ok) {
+          return NextResponse.json({ error: consumed.error }, { status: 400 });
+        }
+      }
+      merged.featuredUntil = new Date(
+        Date.now() + FEATURE_ON_MARKET_DAYS * 24 * 60 * 60 * 1000,
+      ).toISOString();
+    }
+
     merged.status = "live";
   }
 

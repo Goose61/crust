@@ -26,6 +26,14 @@ export const OVERALL_RARITY_CLASS: Record<OverallRarity, string> = {
   common: "bg-white/20 text-white",
 };
 
+export const OVERALL_RARITY_FRAME: Record<OverallRarity, string> = {
+  legendary: "nft-frame-legendary",
+  epic: "nft-frame-epic",
+  rare: "nft-frame-rare",
+  uncommon: "nft-frame-uncommon",
+  common: "nft-frame-common",
+};
+
 export function tokenRarityRank(token: GeneratedToken): number | null {
   const attr = (token.attributes ?? []).find((a) => a.trait_type === "Rarity Rank");
   if (attr == null) return null;

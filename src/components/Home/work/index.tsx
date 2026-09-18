@@ -22,11 +22,11 @@ const Work = () => {
   const services = [
     {
       icon: "/images/chooseus/chooseus-icon-1.svg",
-      text: "Trait layers: folder names become traits, art generated automatically",
+      text: "ZIP of finished art → metadata, rarity ranks, and go-live in one wizard",
     },
     {
       icon: "/images/chooseus/chooseus-icon-2.svg",
-      text: "SOL, USDC, or SPL at the same USD price with no meme-coin discount",
+      text: "SlicePay or SOL at the same live USD mint price",
     },
     {
       icon: "/images/chooseus/chooseus-icon-3.svg",
@@ -34,11 +34,11 @@ const Work = () => {
     },
     {
       icon: "/images/chooseus/chooseus-icon-1.svg",
-      text: "Permanent on-chain storage + locked, immutable fee splits",
+      text: "Permanent Arweave storage + locked, immutable fee splits",
     },
     {
       icon: "/images/chooseus/chooseus-icon-2.svg",
-      text: "Blind mint, reveal, gift mint, allowlist, waitlist",
+      text: "Blind mint, reveal, allowlist, and free gifts from the dashboard",
     },
     {
       icon: "/images/chooseus/chooseus-icon-3.svg",

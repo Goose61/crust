@@ -16,6 +16,7 @@ export type MarketCard = {
   coverSrc: string;
   stats: CollectionMarketStats;
   hasListings: boolean;
+  featuredUntil?: string | null;
 };
 
 export function toMarketCard(collection: Collection): MarketCard {
@@ -33,6 +34,7 @@ export function toMarketCard(collection: Collection): MarketCard {
     stats: collectionMarketStats(collection),
     hasListings:
       Boolean(collection.secondaryEnabled) && tokens.some((t) => Boolean(t.listing)),
+    featuredUntil: collection.featuredUntil ?? null,
   };
 }
 
@@ -57,6 +59,12 @@ export function partitionMarketCards(collections: Collection[]): {
     }
   }
   const secondary = live.filter((card) => card.hasListings);
+  const now = Date.now();
+  live.sort((a, b) => {
+    const aFeat = a.featuredUntil && new Date(a.featuredUntil).getTime() > now ? 1 : 0;
+    const bFeat = b.featuredUntil && new Date(b.featuredUntil).getTime() > now ? 1 : 0;
+    return bFeat - aFeat;
+  });
   const giftBundle = live.find((card) => card.kind === "gift_bundle");
   return { live, secondary, giftBundle };
 }

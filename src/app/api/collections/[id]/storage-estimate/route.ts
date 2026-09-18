@@ -9,25 +9,13 @@ import {
   IRYS_BUNDLER_BUFFER_MULTIPLIER,
   STORAGE_PAYMENT_GAS_SOL,
 } from "@/lib/storage-cost-constants";
+import { fetchSolUsd } from "@/lib/sol-price";
+import { FEATURE_ON_MARKET_USD } from "@/lib/platform-fees";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
-
-async function fetchSolPriceUsd(): Promise<number | null> {
-  try {
-    const res = await fetch(
-      "https://lite-api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112",
-      { signal: AbortSignal.timeout(3_000) },
-    );
-    if (!res.ok) return null;
-    const json = (await res.json()) as { data: Record<string, { price: number }> };
-    return json.data["So11111111111111111111111111111111111111112"]?.price ?? null;
-  } catch {
-    return null;
-  }
-}
 
 export async function GET(req: NextRequest, { params }: Params) {
   try {
@@ -48,7 +36,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     const devnet = isDevnetNetwork(network);
     const [lamports, solPriceUsd] = await Promise.all([
       fetchIrysPriceLamports(totalBytes, devnet),
-      fetchSolPriceUsd(),
+      fetchSolUsd(),
     ]);
     const sol = Number(lamports) / 1e9;
     const irysBundlerBufferSol = sol * (IRYS_BUNDLER_BUFFER_MULTIPLIER - 1);
@@ -80,6 +68,8 @@ export async function GET(req: NextRequest, { params }: Params) {
       serverBulkUpload: isServerBulkArweaveAvailable(),
       /** Server uploader pubkey — creator grants a one-time Irys spend approval (not a SOL transfer). */
       uploadDelegateAddress: getPlatformPublicKey(),
+      featuredPayTo: getPlatformPublicKey(),
+      featuredFeeUsd: FEATURE_ON_MARKET_USD,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Estimate failed";

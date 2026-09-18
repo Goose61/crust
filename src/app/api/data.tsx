@@ -44,11 +44,11 @@ export const pricedata: {
 export const portfolioData: { image: string; title: string }[] = [
   {
     image: "/images/portfolio/portfolio-icon-1.svg",
-    title: "Launch without writing JSON",
+    title: "Launch from a ZIP — no JSON required",
   },
   {
     image: "/images/portfolio/portfolio-icon-2.svg",
-    title: "Pay in SOL, USDC, or any SPL",
+    title: "Pay in SlicePay or SOL at a live USD quote",
   },
   {
     image: "/images/portfolio/portfolio-icon-3.svg",
@@ -57,14 +57,14 @@ export const portfolioData: { image: string; title: string }[] = [
 ];
 
 export const upgradeData: { title: string }[] = [
-  { title: "Permanent on-chain storage" },
+  { title: "Permanent Arweave storage" },
   { title: "Blind mint + timed reveal" },
-  { title: "Gift mint to any wallet" },
-  { title: "SOL / USDC / SPL at spot USD" },
+  { title: "Gift unminted pieces from the dashboard" },
+  { title: "Live SOL quotes for USD prices" },
   { title: "SlicePay hosted checkout" },
   { title: "In-ecosystem secondary market" },
   { title: "Locked creator fee splits" },
-  { title: "Layer compositor + rarity ranks" },
+  { title: "Trait rarity ranks and filters" },
 ];
 
 export const perksData: {
@@ -76,7 +76,7 @@ export const perksData: {
   {
     icon: "/images/perks/peak-icon-1.svg",
     title: "Creator dashboard",
-    text: "Reveal, milestones, allowlists, and mint progress in one place.",
+    text: "Logos, reveals, and free gifts to other wallets from one place.",
     space: "lg:mt-8",
   },
   {
@@ -101,20 +101,20 @@ export const timelineData: {
 }[] = [
   {
     icon: "/images/timeline/icon-planning.svg",
-    title: "Layers",
-    text: "Upload trait folders. We composite and write metadata.",
+    title: "Upload",
+    text: "Drop a ZIP of finished images. We write Metaplex metadata for you.",
     position: "md:top-0 md:left-0",
   },
   {
     icon: "/images/timeline/icon-refinement.svg",
     title: "Rarity",
-    text: "Sliders set trait odds. Ranks compute after generate.",
+    text: "Overall ranks from traits. Filter and sort on the collection page.",
     position: "md:top-0 md:right-0",
   },
   {
     icon: "/images/timeline/icon-prototype.svg",
     title: "Mint",
-    text: "Go live on Solana. Collectors pay SOL, USDC, or SPL at spot.",
+    text: "Go live on Solana. Collectors pay SlicePay or SOL at a live USD quote.",
     position: "md:bottom-0 md:left-0",
   },
   {

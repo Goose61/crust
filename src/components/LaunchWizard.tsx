@@ -62,6 +62,8 @@ import {
   PRIMARY_PLATFORM_TOTAL_PERCENT,
   PRIMARY_TRADE_TAX_PERCENT,
   SECONDARY_PLATFORM_FEE_PERCENT,
+  FEATURE_ON_MARKET_USD,
+  FEATURE_ON_MARKET_DAYS,
 } from "@/lib/platform-fees";
 import {
   applyMetadataOverrides,
@@ -238,14 +240,14 @@ function PriceUnitToggle({
           SOL
         </button>
       </div>
-      <span className="text-[11px] text-white/40">1 SOL ≈ ${solUsd.toFixed(2)}</span>
+      <span className="text-[11px] text-white/40">1 SOL ≈ ${solUsd.toFixed(2)} live</span>
     </div>
   );
 }
 
 export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const router = useRouter();
-  const { publicKey, connect, signCoreCollectionTx } = useWallet();
+  const { publicKey, connect, signCoreCollectionTx, signAndSendTx } = useWallet();
 
   const [mode, setMode] = useState<Mode>(null);
   const [step, setStep] = useState(0);
@@ -288,6 +290,8 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   const [launchCosts, setLaunchCosts] = useState<LaunchCostEstimate | null>(null);
   const [launchCostsLoading, setLaunchCostsLoading] = useState(false);
   const [launchCostsError, setLaunchCostsError] = useState<string | null>(null);
+  const [featureOnMarket, setFeatureOnMarket] = useState(false);
+  const [featuredPayTo, setFeaturedPayTo] = useState<string | null>(null);
 
   const uploadInProgressRef = useRef(false);
   const rezipInputRef = useRef<HTMLInputElement>(null);
@@ -328,6 +332,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         if (!cancelled) {
           setLaunchCosts(est);
           setSolUsd(est.solUsd);
+          setFeaturedPayTo(est.featuredPayTo);
         }
       })
       .catch((e) => {
@@ -557,7 +562,7 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
   useEffect(() => {
     if (!collection || !mode) return;
     const stepName = wizardSteps(mode)[step];
-    if (stepName !== "Payments" && stepName !== "Traits") return;
+    if (stepName !== "Payments" && stepName !== "Traits" && stepName !== "Go live") return;
     let cancelled = false;
     void fetch("/api/quotes?usd=1")
       .then((res) => (res.ok ? res.json() : null))
@@ -974,7 +979,15 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
     setUploadProgress(null);
     await checkLocalAssets(collection);
   }
-  async function save(patch: Partial<Collection> = {}, action?: string, base?: Collection) {
+  async function save(
+    patch: Partial<Collection> & {
+      featureOnMarket?: boolean;
+      featuredTxSignature?: string;
+      network?: string;
+    } = {},
+    action?: string,
+    base?: Collection,
+  ) {
     const src = base ?? collectionRef.current;
     if (!src) return src;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -1420,12 +1433,45 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
       }
 
       setGoLivePhase("Finalizing launch…");
+      let featuredTxSignature: string | undefined;
+      if (featureOnMarket) {
+        const payTo = featuredPayTo;
+        const quoteRes = await fetch(`/api/quotes?usd=${FEATURE_ON_MARKET_USD}`);
+        const quoteData = (await quoteRes.json()) as { quote?: { sol?: number } };
+        const featuredSol = quoteData.quote?.sol ?? usdToSol(FEATURE_ON_MARKET_USD, solUsd);
+        if (payTo && featuredSol > 0) {
+          setGoLivePhase(
+            `Pay $${FEATURE_ON_MARKET_USD} featured Market listing (~${featuredSol.toFixed(4)} SOL)…`,
+          );
+          const { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } =
+            await import("@solana/web3.js");
+          const { getRpcUrl } = await import("@/lib/solana-config");
+          const connection = new Connection(getRpcUrl(), "confirmed");
+          const { blockhash } = await connection.getLatestBlockhash();
+          const tx = new Transaction().add(
+            SystemProgram.transfer({
+              fromPubkey: new PublicKey(publicKey),
+              toPubkey: new PublicKey(payTo),
+              lamports: Math.ceil(featuredSol * LAMPORTS_PER_SOL),
+            }),
+          );
+          tx.recentBlockhash = blockhash;
+          tx.feePayer = new PublicKey(publicKey);
+          const txBase64 = Buffer.from(
+            tx.serialize({ requireAllSignatures: false, verifySignatures: false }),
+          ).toString("base64");
+          featuredTxSignature = await signAndSendTx(txBase64);
+        }
+      }
       current =
         (await save(
           {
             fees: { ...current.fees, locked: true },
             coreCollectionAddress,
             coreCollectionTxUrl,
+            featureOnMarket,
+            featuredTxSignature,
+            network,
           },
           "go-live",
           current,
@@ -1526,8 +1572,9 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
         <div className="container mx-auto max-w-4xl px-4 py-12">
         <h1 className="text-3xl font-bold text-white">Launch a collection</h1>
         <p className="mt-2 text-sm text-white/60">
-          Connect your wallet first. ZIPs are parsed locally in your browser — nothing is uploaded
-          to our servers until you go live and pay for permanent Arweave storage from your wallet.
+          Connect your wallet first. Finished-art ZIPs are parsed in your browser — nothing is
+          uploaded until you go live and pay Arweave storage (and an optional $50 Market feature)
+          from that wallet.
         </p>
 
         {error && (
@@ -2881,24 +2928,64 @@ export function LaunchWizard({ resumeId }: { resumeId?: string }) {
                     <span>Ginger launch fee</span>
                     <span>$0</span>
                   </div>
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-white/10 bg-black/20 px-3 py-3">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={featureOnMarket}
+                      onChange={(e) => setFeatureOnMarket(e.target.checked)}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-white">
+                        Feature on Market (+${FEATURE_ON_MARKET_USD})
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-white/45">
+                        Pin this collection at the top of Market for {FEATURE_ON_MARKET_DAYS} days.
+                        Paid in SOL at the live rate
+                        {launchCosts.solUsd
+                          ? ` (≈ ${formatSolAmount(usdToSol(FEATURE_ON_MARKET_USD, launchCosts.solUsd))} SOL)`
+                          : ""}
+                        .
+                      </span>
+                    </span>
+                  </label>
+                  {featureOnMarket && (
+                    <div className="flex justify-between text-white/70">
+                      <span>Featured Market listing</span>
+                      <span className="shrink-0 text-right">
+                        {formatSolAmount(usdToSol(FEATURE_ON_MARKET_USD, launchCosts.solUsd))} SOL
+                        <span className="block text-xs text-white/40">
+                          ≈ ${FEATURE_ON_MARKET_USD.toFixed(2)}
+                        </span>
+                      </span>
+                    </div>
+                  )}
                   <div className="mt-2 flex justify-between border-t border-white/10 pt-2 font-medium text-white">
                     <span>Total due from your wallet</span>
                     <span className="shrink-0 text-right">
-                      {formatSolAmount(launchCosts.totalSol)} SOL
+                      {formatSolAmount(
+                        launchCosts.totalSol +
+                          (featureOnMarket ? usdToSol(FEATURE_ON_MARKET_USD, launchCosts.solUsd) : 0),
+                      )}{" "}
+                      SOL
                       <span className="block text-xs font-normal text-white/50">
-                        ≈ ${launchCosts.totalUsd.toFixed(2)}
+                        ≈ $
+                        {(
+                          launchCosts.totalUsd + (featureOnMarket ? FEATURE_ON_MARKET_USD : 0)
+                        ).toFixed(2)}
                       </span>
                     </span>
                   </div>
                 </div>
               ) : null}
               <p className="mt-3 text-[11px] text-white/35">
-                You fund Irys directly from your wallet — no SOL goes to a platform wallet. Large
-                collections: one funding tx + one upload authorization, then the server bulk-uploads
-                with no per-file wallet popups. Keep this tab open until upload finishes.
-                No Ginger launch fee — marketplace takes {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint (
+                No Ginger launch fee unless you add Featured Market (+${FEATURE_ON_MARKET_USD}).
+                You fund Irys directly from your wallet — storage SOL does not go to Ginger.
+                Large collections: one funding tx + one upload authorization, then the server
+                bulk-uploads with no per-file wallet popups. Keep this tab open until upload finishes.
+                Marketplace takes {PRIMARY_PLATFORM_TOTAL_PERCENT}% per mint (
                 {PRIMARY_PLATFORM_FEE_PERCENT}% + {PRIMARY_TRADE_TAX_PERCENT}% trade tax) and{" "}
-                {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales only.
+                {SECONDARY_PLATFORM_FEE_PERCENT}% on secondary sales.
               </p>
               {estimatedMintRevenue > 0 && (
                 <p className="mt-1 text-[11px] text-emerald-400/70">
