@@ -6,7 +6,8 @@ import type { Collection, GeneratedToken } from "@/lib/types";
 import { useWallet, networkName } from "./WalletProvider";
 import { explorerClusterQuery } from "@/lib/solana-config";
 import { isGiftBundle } from "@/lib/gift-bundle";
-import { formatUsd, formatUsdAmount, filterTokensByTrait, filterTokensByStatus, filterTokensBySearch, sortTokens, isTokenSold, nftPrice, tokenImageSrc, tokenName, uniqueTraitFilters, logoImageSrc, COLLECTION_GRID_PAGE_SIZE, type TokenSort, type TokenStatusFilter } from "@/lib/collection-ui";
+import { formatUsd, formatUsdAmount, formatUsdAndSol, formatSol, usdToSol, filterTokensByTrait, filterTokensByStatus, filterTokensBySearch, filterTokensByRarity, sortTokens, isTokenSold, nftPrice, tokenAskPrice, tokenImageSrc, tokenName, uniqueTraitFilters, logoImageSrc, COLLECTION_GRID_PAGE_SIZE, type TokenSort, type TokenStatusFilter, type OverallRarityFilter } from "@/lib/collection-ui";
+import { OVERALL_RARITY_CLASS, OVERALL_RARITY_LABEL, OVERALL_RARITY_ORDER, rarityRankByTokenId, tokenOverallRarity, tokenRarityRank } from "@/lib/rarity";
 import { collectionMarketStats } from "@/lib/collection-stats";
 import { CollectionSocialLinks } from "@/components/CollectionSocialLinks";
 import { readJsonResponse } from "@/lib/fetch-json";
@@ -44,18 +45,25 @@ export function CollectionMint({ initial }: { initial: Collection }) {
   const [statusFilter, setStatusFilter] = useState<TokenStatusFilter>("all");
   const [sort, setSort] = useState<TokenSort>("id_asc");
   const [search, setSearch] = useState("");
+  const [rarityFilter, setRarityFilter] = useState<OverallRarityFilter>("all");
+  const [solUsd, setSolUsd] = useState<number | null>(null);
   const [visibleCount, setVisibleCount] = useState(COLLECTION_GRID_PAGE_SIZE);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pendingTokenRef = useRef<GeneratedToken | null>(null);
   const returnHandledRef = useRef(false);
 
+  const rarityRanks = useMemo(
+    () => rarityRankByTokenId(collection.tokens),
+    [collection.tokens],
+  );
   const tokens = useMemo(() => {
     const searched = filterTokensBySearch(collection.tokens, collection, search);
     const byStatus = filterTokensByStatus(searched, collection, statusFilter);
-    const byTrait = filterTokensByTrait(byStatus, collection, traitFilters);
-    return sortTokens(byTrait, collection, sort);
-  }, [collection, traitFilters, statusFilter, sort, search]);
+    const byRarity = filterTokensByRarity(byStatus, collection, rarityFilter, rarityRanks);
+    const byTrait = filterTokensByTrait(byRarity, collection, traitFilters);
+    return sortTokens(byTrait, collection, sort, rarityRanks);
+  }, [collection, traitFilters, statusFilter, sort, search, rarityFilter, rarityRanks]);
   const traitFilterOptions = useMemo(
     () => uniqueTraitFilters(collection),
     [collection],
@@ -72,7 +80,20 @@ export function CollectionMint({ initial }: { initial: Collection }) {
 
   useEffect(() => {
     setVisibleCount(COLLECTION_GRID_PAGE_SIZE);
-  }, [search, statusFilter, sort, traitFilters]);
+  }, [search, statusFilter, sort, traitFilters, rarityFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/quotes?usd=1")
+      .then((r) => r.json())
+      .then((data: { quote?: { solUsd?: number } }) => {
+        if (!cancelled && data.quote?.solUsd) setSolUsd(data.quote.solUsd);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const pendingOnChainToken = useMemo(() => {
     if (!publicKey) return null;
@@ -569,10 +590,10 @@ export function CollectionMint({ initial }: { initial: Collection }) {
           </p>
 
           <dl className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Stat label="Floor" value={formatUsd(stats.floorUsd)} tip="Lowest listing, or cheapest remaining mint price" />
+            <Stat label="Floor" value={formatUsdAndSol(stats.floorUsd, solUsd)} tip="Lowest listing, or cheapest remaining mint price" />
             <Stat label="Volume" value={formatUsdAmount(stats.volumeUsd)} tip="All-time primary + secondary sales" />
             <Stat label="Market cap" value={formatUsdAmount(stats.marketCapUsd)} tip="Floor × total supply" />
-            <Stat label="Price from" value={formatUsd(collection.payments.basePriceUsd)} />
+            <Stat label="Price from" value={formatUsdAndSol(collection.payments.basePriceUsd, solUsd)} />
             <Stat label="Available" value={String(remaining)} />
             <Stat label="Sold" value={String(soldCount)} />
           </dl>
@@ -634,6 +655,21 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                 </button>
               ))}
             </div>
+            <label className="flex w-full items-center gap-2 text-xs text-white/50 sm:w-auto">
+              Rarity
+              <select
+                className="min-w-0 flex-1 rounded-lg border border-white/12 bg-white/5 px-2 py-1.5 text-white sm:flex-none"
+                value={rarityFilter}
+                onChange={(e) => setRarityFilter(e.target.value as OverallRarityFilter)}
+              >
+                <option value="all">All rarities</option>
+                {OVERALL_RARITY_ORDER.map((value) => (
+                  <option key={value} value={value}>
+                    {OVERALL_RARITY_LABEL[value]}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="flex w-full items-center gap-2 text-xs text-white/50 sm:ml-auto sm:w-auto">
               Sort
               <select
@@ -644,6 +680,8 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                 <option value="id_asc">Token ID</option>
                 <option value="price_asc">Price: low to high</option>
                 <option value="price_desc">Price: high to low</option>
+                <option value="rarity_asc">Rarity: rarest first</option>
+                <option value="rarity_desc">Rarity: most common first</option>
               </select>
             </label>
           </div>
@@ -685,11 +723,12 @@ export function CollectionMint({ initial }: { initial: Collection }) {
           {visibleTokens.map((token, index) => {
             const sold = isTokenSold(token, collection);
             const listed = Boolean(token.listing);
-            const priceLabel = listed
-              ? formatUsd(token.listing!.priceUsd)
-              : sold
-                ? "SOLD"
-                : formatUsd(nftPrice(collection, token));
+            const priceUsd = tokenAskPrice(collection, token);
+            const rarity = tokenOverallRarity(
+              token,
+              collection.supply || collection.tokens.length,
+              rarityRanks,
+            );
             return (
               <button
                 key={token.tokenId}
@@ -716,7 +755,12 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                       sold && !listed ? "bg-white text-black" : "bg-primary text-white"
                     }`}
                   >
-                    {priceLabel}
+                    {sold && !listed ? "SOLD" : formatUsd(priceUsd)}
+                  </span>
+                  <span
+                    className={`absolute right-2.5 top-2.5 rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${OVERALL_RARITY_CLASS[rarity]}`}
+                  >
+                    {OVERALL_RARITY_LABEL[rarity]}
                   </span>
                 </div>
                 <div className="border-t border-white/10 px-3 py-2.5">
@@ -725,6 +769,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                   </div>
                   <div className="mt-0.5 font-[family-name:var(--font-mono)] text-[10px] tracking-[0.12em] text-white/40">
                     #{token.tokenId}
+                    {!(sold && !listed) && solUsd && priceUsd > 0 ? ` · ${formatSol(usdToSol(priceUsd, solUsd))}` : ""}
                   </div>
                 </div>
               </button>
@@ -752,7 +797,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
           onClick={() => setSelected(null)}
         >
           <div
-            className="tile max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-t-3xl sm:rounded-3xl"
+            className="tile max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-t-3xl border border-white/15 bg-[#161311] shadow-2xl sm:rounded-3xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="grid md:grid-cols-2">
@@ -762,19 +807,41 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                 alt={tokenName(collection, selected)}
                 className="aspect-square w-full object-cover"
               />
-              <div className="p-5">
+              <div className="bg-[#161311] p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-[family-name:var(--font-mono)] text-[11px] text-white/40">
                       {isTokenSold(selected, collection) ? "SOLD" : "AVAILABLE"}
                     </p>
                     <h3 className="mt-1 break-words text-2xl font-bold text-white sm:text-3xl">{tokenName(collection, selected)}</h3>
+                    {(() => {
+                      const rarity = tokenOverallRarity(
+                        selected,
+                        collection.supply || collection.tokens.length,
+                        rarityRanks,
+                      );
+                      const rank = rarityRanks.get(selected.tokenId) ?? tokenRarityRank(selected);
+                      return (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize ${OVERALL_RARITY_CLASS[rarity]}`}>
+                            {OVERALL_RARITY_LABEL[rarity]}
+                          </span>
+                          {rank != null && (
+                            <span className="text-xs text-white/45">
+                              Rank {rank}/{collection.supply || collection.tokens.length}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <button onClick={() => setSelected(null)} className="text-sm text-white/50">
                     Close
                   </button>
                 </div>
-                <p className="mt-3 text-lg font-semibold text-white">{formatUsd(nftPrice(collection, selected))}</p>
+                <p className="mt-3 text-lg font-semibold text-white">
+                  {formatUsdAndSol(tokenAskPrice(collection, selected), solUsd)}
+                </p>
                 <dl className="mt-4 grid grid-cols-2 gap-2">
                   {selected.attributes
                     .filter((a) => a.trait_type !== "Rarity Rank")
@@ -837,9 +904,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                 )}
 
                 <p className="mt-3 text-lg font-semibold text-white">
-                  {selected.listing
-                    ? formatUsd(selected.listing.priceUsd)
-                    : formatUsd(nftPrice(collection, selected))}
+                  {formatUsdAndSol(tokenAskPrice(collection, selected), solUsd)}
                 </p>
 
                 {/* Secondary: buy listed token */}
@@ -867,7 +932,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                         onClick={() => void startCheckout(selected, "secondary_buy")}
                         className="w-full bg-primary py-3 text-sm font-medium text-white disabled:opacity-40"
                       >
-                        {busy ? "Opening SlicePay…" : `Buy for ${formatUsd(selected.listing.priceUsd)}`}
+                        {busy ? "Opening SlicePay…" : `Buy for ${formatUsdAndSol(selected.listing.priceUsd, solUsd)}`}
                       </button>
                     )}
                   </div>
@@ -881,7 +946,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                     <p className="text-xs text-white/50">Your NFT — secondary market</p>
                     {selected.listing ? (
                       <>
-                        <p className="text-sm text-white">Listed at {formatUsd(selected.listing.priceUsd)}</p>
+                        <p className="text-sm text-white">Listed at {formatUsdAndSol(selected.listing.priceUsd, solUsd)}</p>
                         <button
                           disabled={busy}
                           onClick={() => void unlist(selected)}
@@ -955,7 +1020,7 @@ export function CollectionMint({ initial }: { initial: Collection }) {
                         onClick={() => void payWithSol(selected)}
                         className="w-full bg-primary py-3 text-sm font-medium text-primary-foreground disabled:opacity-40"
                       >
-                        {busy ? "Processing…" : publicKey ? `Pay ${formatUsd(nftPrice(collection, selected))} in SOL` : "Connect wallet"}
+                        {busy ? "Processing…" : publicKey ? `Pay ${formatUsdAndSol(nftPrice(collection, selected), solUsd)}` : "Connect wallet"}
                       </button>
                     ) : checkoutPending ? (
                       <>

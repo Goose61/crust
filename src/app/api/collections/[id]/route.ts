@@ -449,6 +449,100 @@ export async function POST(req: NextRequest, { params }: Params) {
       });
     }
 
+    if (body.action === "creator_gift") {
+      const auth = readAuthHeaders(req);
+      const rl = await rateLimit(`creator-gift:${auth?.wallet || ip}`, 20, 15 * 60 * 1000);
+      if (!rl.allowed) return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+      const existing = await getCollection(id);
+      if (!existing) return NextResponse.json({ error: "not found" }, { status: 404 });
+      try {
+        assertCreatorAuth(auth, existing.payments.creatorWallet);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Unauthorized";
+        return NextResponse.json({ error: message }, { status: 401 });
+      }
+      const payerAddr = auth?.wallet;
+      if (!payerAddr) {
+        return NextResponse.json({ error: "Wallet signature required" }, { status: 401 });
+      }
+
+      const recipientAddr = String(body.recipient || "").trim();
+      const tokenId = Number(body.tokenId);
+      if (!isValidSolanaAddress(recipientAddr)) {
+        return NextResponse.json({ error: "Valid recipient wallet required" }, { status: 400 });
+      }
+      if (!Number.isFinite(tokenId) || tokenId <= 0) {
+        return NextResponse.json({ error: "tokenId required" }, { status: 400 });
+      }
+      if (existing.status !== "live") {
+        return NextResponse.json({ error: "Collection is not live" }, { status: 400 });
+      }
+
+      const token = existing.tokens.find((t) => t.tokenId === tokenId);
+      if (!token) return NextResponse.json({ error: "Token not found" }, { status: 404 });
+      if (tokenIsCommitted(token)) {
+        return NextResponse.json({ error: "That NFT is already minted or reserved" }, { status: 400 });
+      }
+
+      const useOnChain = Boolean(getPlatformSecretKey());
+      if (useOnChain) {
+        const reserved = await tryReserveToken(id, token.tokenId, recipientAddr);
+        if (!reserved) {
+          return NextResponse.json({ error: "That NFT is already minted or reserved" }, { status: 400 });
+        }
+      } else {
+        const assigned = await tryAssignTokenOwner(id, token.tokenId, recipientAddr);
+        if (!assigned) {
+          return NextResponse.json({ error: "That NFT is already minted or reserved" }, { status: 400 });
+        }
+      }
+
+      let txResult: BuildTxResult | null = null;
+      if (useOnChain) {
+        const network = parseNetwork(body.network);
+        try {
+          const built = await buildPendingMintForToken({
+            collection: existing,
+            tokenId: token.tokenId,
+            payer: payerAddr,
+            recipient: recipientAddr,
+            network,
+          });
+          txResult = built.txResult;
+        } catch (e) {
+          await rollbackMint({
+            id,
+            tokenIds: [token.tokenId],
+            recipient: recipientAddr,
+            onChain: true,
+          });
+          const message = e instanceof Error ? e.message : "On-chain mint could not be built";
+          console.error("[creator_gift] On-chain tx build failed:", e);
+          return NextResponse.json({ error: message }, { status: 500 });
+        }
+      }
+
+      const collection = await updateCollection(id, (current) => {
+        const gifted = current.tokens.find((t) => t.tokenId === tokenId);
+        if (gifted && txResult) gifted.assetAddress = txResult.assetAddress;
+        if (txResult) {
+          current.pendingMint = { ...txResult.pendingMint, tokenId };
+        }
+        current.mintedCount = committedCount(current);
+        if (current.mintedCount >= current.supply) current.status = "sold_out";
+        return applyRevealTriggers(fireDueMilestones(current));
+      });
+      if (!collection) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+      return NextResponse.json({
+        collection: toPublicCollection(collection),
+        mintedTokenIds: [tokenId],
+        recipient: recipientAddr,
+        requiresOnChainMint: Boolean(txResult),
+        gifted: true,
+      });
+    }
+
     if (body.action === "reveal") {
       const auth = readAuthHeaders(req);
       const existing = await getCollection(id);

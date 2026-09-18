@@ -231,6 +231,13 @@ select option {
   color: #ffffff;
 }
 
+.tile {
+  background: var(--card);
+  color: #ffffff;
+  border: 1px solid rgb(255 255 255 / 0.15);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.55);
+}
+
 .nft-card {
   overflow: hidden;
   border-radius: 1.15rem;

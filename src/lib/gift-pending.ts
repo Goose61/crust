@@ -17,7 +17,7 @@ export function resolvePendingMint(collection: Collection, payer: string): Pendi
     return { ...pm, tokenId: token?.tokenId ?? pm.tokenId };
   }
 
-  if (!token?.metadataUri || !token.owner) {
+  if (!token?.metadataUri) {
     throw new Error("Collection is missing token metadata for mint refresh.");
   }
 
@@ -26,7 +26,7 @@ export function resolvePendingMint(collection: Collection, payer: string): Pendi
     tokenId: token.tokenId,
     name: pm.name ?? `${collection.name} #${token.tokenId}`,
     metadataUri: pm.metadataUri ?? token.metadataUri,
-    recipient: pm.recipient ?? token.owner,
+    recipient: pm.recipient ?? token.owner ?? token.reservedBy ?? "",
     payer: pm.payer ?? payer,
   };
 }

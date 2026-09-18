@@ -1,11 +1,14 @@
 import type { Collection, GeneratedToken } from "./types";
 import { giftDisplayNameFromToken, isGiftBundle } from "./gift-bundle";
 import { isTokenRevealed, placeholderImageSrc } from "./reveal";
+import type { OverallRarity } from "./rarity";
+import { OVERALL_RARITY_LABEL, rarityRankByTokenId, tokenOverallRarity } from "./rarity";
 
 export const COLLECTION_GRID_PAGE_SIZE = 48;
 
 export type TokenStatusFilter = "all" | "for_sale" | "sold" | "listed";
-export type TokenSort = "id_asc" | "price_asc" | "price_desc";
+export type TokenSort = "id_asc" | "price_asc" | "price_desc" | "rarity_asc" | "rarity_desc";
+export type OverallRarityFilter = "all" | OverallRarity;
 
 export function nftPrice(collection: Collection, token: GeneratedToken): number {
   let price = collection.payments.basePriceUsd;
@@ -95,6 +98,23 @@ export function formatUsdAmount(value: number) {
   }).format(value);
 }
 
+export function formatSol(sol: number) {
+  if (!Number.isFinite(sol) || sol <= 0) return "0 SOL";
+  const digits = sol < 0.01 ? 4 : sol < 1 ? 3 : 2;
+  return `${sol.toFixed(digits)} SOL`;
+}
+
+export function usdToSol(usd: number, solUsd: number | null | undefined) {
+  if (!solUsd || solUsd <= 0 || !Number.isFinite(usd)) return 0;
+  return usd / solUsd;
+}
+
+export function formatUsdAndSol(usd: number, solUsd: number | null | undefined) {
+  const usdLabel = formatUsd(usd);
+  if (!solUsd || usd <= 0) return usdLabel;
+  return `${usdLabel} · ${formatSol(usdToSol(usd, solUsd))}`;
+}
+
 export function tokenName(collection: Collection, token: GeneratedToken) {
   if (isGiftBundle(collection)) {
     return giftDisplayNameFromToken(token);
@@ -141,10 +161,12 @@ export function filterTokensBySearch(
 ): GeneratedToken[] {
   const q = query.trim().toLowerCase();
   if (!q) return tokens;
+  const supply = collection.supply || collection.tokens.length;
   return tokens.filter((token) => {
     const name = tokenName(collection, token).toLowerCase();
     const id = String(token.tokenId);
-    return name.includes(q) || id.includes(q) || `#${id}`.includes(q);
+    const rarity = OVERALL_RARITY_LABEL[tokenOverallRarity(token, supply)].toLowerCase();
+    return name.includes(q) || id.includes(q) || `#${id}`.includes(q) || rarity.includes(q);
   });
 }
 
@@ -153,16 +175,37 @@ export function tokenAskPrice(collection: Collection, token: GeneratedToken): nu
   return nftPrice(collection, token);
 }
 
+export function filterTokensByRarity(
+  tokens: GeneratedToken[],
+  collection: Collection,
+  rarity: OverallRarityFilter,
+  ranks?: Map<number, number>,
+): GeneratedToken[] {
+  if (rarity === "all") return tokens;
+  const supply = collection.supply || collection.tokens.length;
+  const rankMap = ranks ?? rarityRankByTokenId(collection.tokens);
+  return tokens.filter((token) => tokenOverallRarity(token, supply, rankMap) === rarity);
+}
+
 export function sortTokens(
   tokens: GeneratedToken[],
   collection: Collection,
   sort: TokenSort,
+  ranks?: Map<number, number>,
 ): GeneratedToken[] {
   const copy = [...tokens];
   if (sort === "price_asc") {
     copy.sort((a, b) => tokenAskPrice(collection, a) - tokenAskPrice(collection, b) || a.tokenId - b.tokenId);
   } else if (sort === "price_desc") {
     copy.sort((a, b) => tokenAskPrice(collection, b) - tokenAskPrice(collection, a) || a.tokenId - b.tokenId);
+  } else if (sort === "rarity_asc" || sort === "rarity_desc") {
+    const rankMap = ranks ?? rarityRankByTokenId(collection.tokens);
+    const dir = sort === "rarity_asc" ? 1 : -1;
+    copy.sort((a, b) => {
+      const ra = rankMap.get(a.tokenId) ?? Number.POSITIVE_INFINITY;
+      const rb = rankMap.get(b.tokenId) ?? Number.POSITIVE_INFINITY;
+      return (ra - rb) * dir || a.tokenId - b.tokenId;
+    });
   } else {
     copy.sort((a, b) => a.tokenId - b.tokenId);
   }

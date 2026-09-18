@@ -6,8 +6,8 @@ import { isServerArweaveUploadAvailable, uploadToArweaveServer } from "@/lib/iry
 
 export const runtime = "nodejs";
 
-const MAX_LOGO_BYTES = 10 * 1024 * 1024; // 10 MB inbound
-const MAX_STORED_BYTES = 120 * 1024;
+const MAX_LOGO_BYTES = 10 * 1024 * 1024; // 10 MB original
+const MAX_INLINE_BYTES = 2.5 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 type Params = { params: Promise<{ id: string }> };
@@ -35,16 +35,10 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Logo too large (max 10 MB)" }, { status: 413 });
     }
 
-    const contentType = ALLOWED_MIME.has(file.type) ? file.type : "image/jpeg";
+    const contentType = ALLOWED_MIME.has(file.type) ? file.type : mimeFromName(file.name);
     const buf = Buffer.from(await file.arrayBuffer());
     if (!isAllowedImageMagic(buf)) {
       return NextResponse.json({ error: "Invalid image file" }, { status: 400 });
-    }
-    if (buf.length > MAX_STORED_BYTES) {
-      return NextResponse.json(
-        { error: "Logo is still too large after compression. Try a simpler square PNG or JPEG." },
-        { status: 413 },
-      );
     }
 
     const logoUrl = await persistLogo(id, buf, contentType);
@@ -57,10 +51,14 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 }
 
-/**
- * Browser already resized the file. Do not use sharp (native bindings fail on
- * this Vercel runtime) and do not fund the empty platform Irys wallet.
- */
+function mimeFromName(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "image/jpeg";
+}
+
+/** Store the original file. Prefer Irys; inline only when the original already fits. */
 async function persistLogo(
   collectionId: string,
   buf: Buffer,
@@ -74,19 +72,21 @@ async function persistLogo(
         requirePosted: true,
       });
     } catch (err) {
-      console.error("[logo] Irys upload skipped, storing inline", err);
+      console.error("[logo] Irys upload skipped, storing original inline if small", err);
     }
+  }
+  if (buf.length > MAX_INLINE_BYTES) {
+    throw new Error(
+      "Could not store the original logo (permanent storage unavailable and the file is too large to keep inline). Retry in a moment.",
+    );
   }
   return `data:${contentType};base64,${buf.toString("base64")}`;
 }
 
 function isAllowedImageMagic(buf: Buffer): boolean {
   if (buf.length < 4) return false;
-  // PNG: 89 50 4E 47
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true;
-  // JPEG: FF D8 FF
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
-  // WebP: 52 49 46 46 ... 57 45 42 50
   if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return true;
   return false;
 }
